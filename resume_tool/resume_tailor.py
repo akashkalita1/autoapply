@@ -113,7 +113,7 @@ def print_diff(original: dict, tailored: dict) -> None:
             print()
 
 
-def main() -> None:
+def main() -> bool:
     master = load_json("data/master_resume.json")
     jd_analysis = load_json("outputs/jd_analysis.json")
 
@@ -122,14 +122,15 @@ def main() -> None:
         tailored = tailor_resume(master, jd_analysis)
     except json.JSONDecodeError as e:
         print(f"\nError: {e}")
-        return
+        return False
     except Exception as e:
         print(f"\nAPI error: {e}")
-        return
+        return False
 
     save_json(tailored, "outputs/tailored_resume.json")
     print_diff(master, tailored)
     print("✓ Saved to outputs/tailored_resume.json")
+    return True
 
 
 if __name__ == "__main__":

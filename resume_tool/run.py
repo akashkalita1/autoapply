@@ -8,8 +8,13 @@ import cover_letter
 def main():
     os.makedirs("outputs", exist_ok=True)
 
-    jd_analyzer.main()
-    resume_tailor.main()
+    if not jd_analyzer.main():
+        print("\nAborting: JD analysis failed.")
+        return
+
+    if not resume_tailor.main():
+        print("\nAborting: Resume tailoring failed.")
+        return
 
     answer = input("\nGenerate cover letter? (y/n): ").strip().lower()
     cover_letter_generated = answer == "y"

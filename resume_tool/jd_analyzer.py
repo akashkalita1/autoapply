@@ -122,32 +122,32 @@ def preview(data: dict) -> None:
         print(f"\nNotes: {notes}")
 
 
-def main() -> None:
+def main() -> bool:
     jd_text = get_jd_input()
 
     if not jd_text:
         print("No input received. Exiting.")
-        return
+        return False
 
     print("\nAnalyzing...")
     try:
         result = analyze_jd(jd_text)
     except json.JSONDecodeError as e:
         print(f"\nError: {e}")
-        return
+        return False
     except ValueError as e:
         print(f"\nValidation error: {e}")
-        return
+        return False
     except Exception as e:
         print(f"\nAPI error: {e}")
-        return
+        return False
 
     preview(result)
     save_json(result, "jd_analysis.json")
     save_json(result, "outputs/jd_analysis.json")
-    # Sanity check read via helper; does not alter existing behavior.
     _ = load_json("jd_analysis.json")
     print("\n✓ Saved to jd_analysis.json")
+    return True
 
 
 if __name__ == "__main__":
