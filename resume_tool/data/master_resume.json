@@ -1,0 +1,278 @@
+{
+    "meta": {
+      "version": "1.1",
+      "last_updated": "2026-04-07",
+      "note": "This is the current resume-aligned master JSON based on the latest one-page resume."
+    },
+  
+    "personal": {
+      "name": "Akash Kalita",
+      "email": "1akashkalita@gmail.com",
+      "phone": "510-366-4389",
+      "location": "San Francisco, CA",
+      "linkedin": "https://linkedin.com/in/akashkalita",
+      "github": "https://github.com/akashkalita1"
+    },
+  
+    "education": [
+      {
+        "id": "edu_001",
+        "institution": "University of California, Irvine (UCI)",
+        "degree": "B.S. in Computer Science",
+        "expected": "June 2028",
+        "gpa": null,
+        "coursework": [
+          "Python Programming & Libraries (Accelerated)",
+          "Intermediate Programming",
+          "Programming in C++",
+          "Introduction to Software Engineering",
+          "Linear Algebra"
+        ],
+        "awards": [
+          "USACO Gold",
+          "Codeforces Candidate Master"
+        ]
+      }
+    ],
+  
+    "skills": {
+      "languages": ["Python", "C++", "SQL"],
+      "technologies": [
+        "PyTorch",
+        "scikit-learn",
+        "Embedding Models",
+        "LLM",
+        "NLP",
+        "Data Pipelines",
+        "Feature Engineering",
+        "REST APIs",
+        "Vespa",
+        "pandas",
+        "Matplotlib",
+        "Flask",
+        "Selenium"
+      ],
+      "concepts": [
+        "Machine Learning",
+        "Artificial Intelligence",
+        "Competitive Programming",
+        "Product Development"
+      ],
+      "interests": [
+        "Investing",
+        "Cryptocurrency",
+        "Reselling",
+        "Basketball",
+        "Lifting",
+        "Math"
+      ]
+    },
+  
+    "experience": [
+      {
+        "id": "exp_001",
+        "title": "Machine Learning Researcher",
+        "company": "Air Pollution Exposure Model - UC Irvine",
+        "location": "Irvine, CA",
+        "start": "Jun 2025",
+        "end": "Dec 2025",
+        "headline": "Python, PyTorch, Embeddings, Pandas, GeoPandas",
+        "tags": [
+          "ML",
+          "Python",
+          "PyTorch",
+          "embeddings",
+          "pandas",
+          "GeoPandas",
+          "data pipeline",
+          "geospatial",
+          "research"
+        ],
+        "bullets": [
+          {
+            "id": "exp_001_b1",
+            "text": "Built an automated pipeline to extract and structure traffic count data from PDFs, scaling ingestion across large datasets",
+            "tags": ["automation", "PDF parsing", "data extraction", "pipeline", "scalability"]
+          },
+          {
+            "id": "exp_001_b2",
+            "text": "Developed ML models to parse and georeference data, improving data quality and enabling high-resolution exposure mapping",
+            "tags": ["ML", "geospatial", "data quality", "mapping"]
+          },
+          {
+            "id": "exp_001_b3",
+            "text": "Architected an end-to-end pipeline with UC Irvine researchers, reducing manual processing and accelerating dataset readiness for epidemiological studies",
+            "tags": ["end-to-end", "collaboration", "research", "pipeline"]
+          },
+          {
+            "id": "exp_001_b4",
+            "text": "Enabled air pollution exposure modeling for 98K+ participants in the MEC study, supporting research on preventing cancer",
+            "tags": ["impact", "public health", "large-scale", "research"]
+          }
+        ]
+      },
+      {
+        "id": "exp_002",
+        "title": "AI Engineer Intern",
+        "company": "Payfederate - AI-Powered Compensation Startup",
+        "location": "San Francisco, CA",
+        "start": "Jan 2024",
+        "end": "Aug 2024",
+        "headline": "Python, Vespa, Embeddings, NLP",
+        "tags": [
+          "AI",
+          "internship",
+          "Python",
+          "Vespa",
+          "embeddings",
+          "NLP",
+          "search",
+          "ranking"
+        ],
+        "bullets": [
+          {
+            "id": "exp_002_b1",
+            "text": "Built a job-matching system using Vespa by implementing vector similarity search, enabling sub-second retrieval across 10K+ records and improving candidate-role match accuracy",
+            "tags": ["vector search", "Vespa", "retrieval", "ranking", "NLP"]
+          },
+          {
+            "id": "exp_002_b2",
+            "text": "Delivered a production-style prototype within 8 weeks by designing system architecture and ranking algorithms, leading to a successful demo and internal validation for potential deployment",
+            "tags": ["system design", "prototype", "ranking", "demo", "delivery"]
+          }
+        ]
+      }
+    ],
+  
+    "projects": [
+      {
+        "id": "proj_001",
+        "name": "LLM-Powered Job Application Automation Tool",
+        "tags": [
+          "LLM",
+          "automation",
+          "resume tailoring",
+          "cover letters",
+          "Selenium",
+          "NLP"
+        ],
+        "tech": ["Python", "LLM APIs", "Prompt Engineering", "Selenium", "NLP", "Data Parsing"],
+        "bullets": [
+          {
+            "id": "proj_001_b1",
+            "text": "Built an LLM-powered job application assistant that parses job descriptions to generate tailored resumes and cover letters",
+            "tags": ["LLM", "resume tailoring", "cover letters", "NLP"]
+          },
+          {
+            "id": "proj_001_b2",
+            "text": "Automated application workflows via web automation and form-filling pipelines, reducing manual effort and enabling high-volume, structured submissions",
+            "tags": ["automation", "web automation", "form filling", "workflow"]
+          }
+        ]
+      },
+      {
+        "id": "proj_002",
+        "name": "Stock & Crypto Price Predictor",
+        "tags": ["ML", "LSTM", "forecasting", "Python", "finance", "data science"],
+        "tech": ["Python", "PyTorch", "scikit-learn", "pandas", "Matplotlib"],
+        "bullets": [
+          {
+            "id": "proj_002_b1",
+            "text": "Built an ML pipeline for stock/crypto forecasting by training LSTM and regression models on historical price data, enabling short-term trend prediction",
+            "tags": ["LSTM", "forecasting", "ML pipeline", "finance"]
+          },
+          {
+            "id": "proj_002_b2",
+            "text": "Engineered time-series features including rolling averages, volatility, and RSI, improving predictive performance and model robustness",
+            "tags": ["feature engineering", "time series", "RSI", "robustness"]
+          },
+          {
+            "id": "proj_002_b3",
+            "text": "Optimized training on Apple Silicon (MPS), accelerating experimentation and reducing training time",
+            "tags": ["optimization", "Apple Silicon", "MPS", "performance"]
+          },
+          {
+            "id": "proj_002_b4",
+            "text": "Developed interactive visualizations for backtesting, enabling evaluation of model accuracy against real market data",
+            "tags": ["visualization", "backtesting", "evaluation", "finance"]
+          }
+        ]
+      },
+      {
+        "id": "proj_003",
+        "name": "LeetCode Problem Recommender",
+        "tags": ["recommendation", "NLP", "Flask", "Python", "collaborative filtering"],
+        "tech": ["Python", "scikit-learn", "pandas", "Flask"],
+        "bullets": [
+          {
+            "id": "proj_003_b1",
+            "text": "Recommendation engine that analyzes a user's LeetCode submission history to identify weak topic areas and surface targeted problems using collaborative and content-based filtering",
+            "tags": ["recommendation system", "collaborative filtering", "content-based filtering"]
+          },
+          {
+            "id": "proj_003_b2",
+            "text": "Built a Flask web interface where users enter their handle and receive ranked recommendations with topic breakdowns and difficulty guidance",
+            "tags": ["Flask", "web interface", "ranking", "UX"]
+          }
+        ]
+      },
+      {
+        "id": "proj_004",
+        "name": "Appointment Availability Tool",
+        "tags": ["automation", "Selenium", "web automation", "DOM parsing", "notifications"],
+        "tech": ["Python", "Selenium", "Web Automation", "DOM Parsing", "Notification Systems"],
+        "bullets": [
+          {
+            "id": "proj_004_b1",
+            "text": "Built an automated DMV appointment monitoring bot by implementing DOM polling and site-specific parsing logic, enabling real-time detection of newly available slots near target dates",
+            "tags": ["automation", "monitoring", "DOM", "parsing", "alerts"]
+          }
+        ]
+      }
+    ],
+  
+    "leadership": [
+      {
+        "id": "lead_001",
+        "organization": "Irvine Consulting Group - UCI's Premier Consulting Group",
+        "location": "Irvine, CA",
+        "role": "SanDisk Project - Consultant",
+        "start": "Jan 2025",
+        "end": "Present",
+        "bullets": [
+          {
+            "id": "lead_001_b1",
+            "text": "Consulting for SanDisk on brand repositioning, analyzing market trends and Gen Z consumer behavior to form growth strategy",
+            "tags": ["consulting", "strategy", "market research", "Gen Z"]
+          },
+          {
+            "id": "lead_001_b2",
+            "text": "Performed competitive analysis and customer segmentation to identify opportunities for increasing brand relevance and engagement",
+            "tags": ["competitive analysis", "segmentation", "branding"]
+          },
+          {
+            "id": "lead_001_b3",
+            "text": "Developed and presented data-driven recommendations on marketing to align with evolving consumer preferences",
+            "tags": ["recommendations", "marketing", "presentation", "data-driven"]
+          }
+        ]
+      }
+    ],
+  
+    "awards": [
+      {
+        "id": "award_001",
+        "title": "USACO Gold",
+        "date": null,
+        "description": null,
+        "tags": ["competitive programming", "algorithms"]
+      },
+      {
+        "id": "award_002",
+        "title": "Codeforces Candidate Master",
+        "date": null,
+        "description": null,
+        "tags": ["competitive programming", "algorithms"]
+      }
+    ]
+  }
