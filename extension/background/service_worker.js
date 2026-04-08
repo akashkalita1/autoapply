@@ -4,6 +4,8 @@
  * profile storage management, and optional OpenAI API integration.
  */
 
+importScripts("../shared/match_rules.js");
+
 // ---- Storage helpers -------------------------------------------------------
 
 const STORAGE_KEYS = {
@@ -65,8 +67,8 @@ function stripMarkdownFences(text) {
  * Call OpenAI to map unmatched fields to the profile.
  * Ported from autofill_agent.py map_fields_to_profile (lines 155-183).
  */
-async function llmMapFields(unmatchedFields, profile, apiKey) {
-  const fullProfile = { applicant_info: profile };
+async function llmMapFields(unmatchedFields, profile, resume, apiKey) {
+  const fullProfile = { applicant_info: profile, resume: resume || {} };
 
   const body = {
     model: "gpt-4o-mini",
@@ -109,139 +111,6 @@ async function llmMapFields(unmatchedFields, profile, apiKey) {
     console.warn("[JobAutofill] LLM returned invalid JSON:", raw.substring(0, 300));
     return [];
   }
-}
-
-// ---- Rule-based matching (runs in service worker context) ------------------
-
-// Inline a minimal version of the matching rules so the background can match
-// without needing the content script's window.JobAutofill namespace.
-
-const MATCH_RULES = [
-  { key: "first_name", patterns: [/\bfirst[\s_-]?name\b/i, /\bgiven[\s_-]?name\b/i, /\bfname\b/i] },
-  { key: "last_name", patterns: [/\blast[\s_-]?name\b/i, /\bfamily[\s_-]?name\b/i, /\bsurname\b/i, /\blname\b/i] },
-  { key: "full_name", patterns: [/\bfull[\s_-]?name\b/i, /\byour[\s_-]?name\b/i], derive: (p) => [p.first_name, p.last_name].filter(Boolean).join(" ") },
-  { key: "email", patterns: [/\be[\s_-]?mail\b/i, /\bemail[\s_-]?address\b/i], inputType: "email" },
-  { key: "phone", patterns: [/\bphone\b/i, /\btelephone\b/i, /\bmobile\b/i, /\bcell\b/i], inputType: "tel" },
-  { key: "address.street", patterns: [/\bstreet[\s_-]?address\b/i, /\baddress[\s_-]?line[\s_-]?1\b/i, /\baddress\b/i] },
-  { key: "address.city", patterns: [/\bcity\b/i, /\btown\b/i] },
-  { key: "address.state", patterns: [/\bstate\b/i, /\bprovince\b/i, /\bregion\b/i] },
-  { key: "address.zip", patterns: [/\bzip\b/i, /\bpostal[\s_-]?code\b/i, /\bpostcode\b/i] },
-  { key: "address.country", patterns: [/\bcountry\b/i] },
-  { key: "linkedin", patterns: [/\blinkedin\b/i] },
-  { key: "github", patterns: [/\bgithub\b/i] },
-  { key: "portfolio", patterns: [/\bportfolio\b/i, /\bpersonal[\s_-]?website\b/i, /\bwebsite\b/i] },
-  { key: "university", patterns: [/\buniversity\b/i, /\bschool\b/i, /\bcollege\b/i, /\binstitution\b/i] },
-  { key: "degree", patterns: [/\bdegree\b/i, /\bmajor\b/i, /\bfield[\s_-]?of[\s_-]?study\b/i] },
-  { key: "gpa", patterns: [/\bgpa\b/i, /\bgrade[\s_-]?point\b/i] },
-  { key: "graduation_year", patterns: [/\bgraduation[\s_-]?year\b/i, /\bgrad[\s_-]?year\b/i, /\bexpected[\s_-]?graduation\b/i] },
-  { key: "graduation_month", patterns: [/\bgraduation[\s_-]?month\b/i] },
-  { key: "graduation_date", patterns: [/\bgraduation[\s_-]?date\b/i, /\bgrad[\s_-]?date\b/i], derive: (p) => [p.graduation_month, p.graduation_year].filter(Boolean).join(" ") },
-  { key: "work_authorization", patterns: [/\bwork[\s_-]?auth/i, /\bauthori[sz]ed[\s_-]?to[\s_-]?work\b/i, /\beligib/i] },
-  { key: "require_sponsorship", patterns: [/\bsponsorship\b/i, /\bvisa[\s_-]?sponsor/i, /\brequire[\s_-]?sponsor/i] },
-  { key: "years_of_experience", patterns: [/\byears[\s_-]?of[\s_-]?experience\b/i, /\btotal[\s_-]?experience\b/i] },
-];
-
-function resolveKey(obj, key) {
-  return key.split(".").reduce((o, k) => (o && o[k] !== undefined ? o[k] : ""), obj);
-}
-
-function buildSignal(field) {
-  return [
-    field.label, field.placeholder, field.name, field.id,
-    field.aria_label, field.nearby_text,
-    Object.values(field.data_attrs || {}).join(" "),
-  ].join(" ").toLowerCase();
-}
-
-function ruleBasedMatch(fields, profile) {
-  const mappings = [];
-  const matched = new Set();
-
-  for (const field of fields) {
-    const signal = buildSignal(field);
-    let didMatch = false;
-
-    for (const rule of MATCH_RULES) {
-      // Check input type shortcut
-      if (rule.inputType && field.type === rule.inputType) {
-        didMatch = true;
-      }
-
-      // Check autocomplete
-      if (!didMatch && rule.autocomplete && field.autocomplete === rule.autocomplete) {
-        didMatch = true;
-      }
-
-      // Check patterns
-      if (!didMatch) {
-        for (const pat of rule.patterns) {
-          if (pat.test(signal)) { didMatch = true; break; }
-        }
-      }
-
-      if (!didMatch) continue;
-
-      let value = rule.derive ? rule.derive(profile) : resolveKey(profile, rule.key);
-
-      // Handle select fields
-      if (field.tag === "select" && field.options) {
-        if (rule.key === "require_sponsorship") {
-          const boolVal = value === true || value === "true" || value === "yes";
-          const pos = /\b(yes|true|i\s*do|will\s*require)\b/i;
-          const neg = /\b(no|false|i\s*do\s*not|will\s*not|don'?t)\b/i;
-          let found = null;
-          for (const o of field.options) {
-            const t = o.text || o.value || "";
-            if (boolVal && pos.test(t)) { found = o.value; break; }
-            if (!boolVal && neg.test(t)) { found = o.value; break; }
-          }
-          value = found;
-        } else if (rule.key === "work_authorization") {
-          const lower = String(value).toLowerCase();
-          let found = null;
-          for (const o of field.options) {
-            const t = (o.text || "").toLowerCase();
-            if (t && lower && t.includes(lower.substring(0, 10))) { found = o.value; break; }
-          }
-          if (!found) {
-            const isCitizen = /citizen|authorized|permanent/i.test(lower);
-            for (const o of field.options) {
-              const t = (o.text || "").toLowerCase();
-              if (isCitizen && /citizen|authorized|permanent|no\s*sponsor/i.test(t)) { found = o.value; break; }
-            }
-          }
-          value = found;
-        } else {
-          const lower = String(value).toLowerCase();
-          const found = field.options.find(o =>
-            o.value.toLowerCase() === lower ||
-            o.text.toLowerCase() === lower ||
-            o.text.toLowerCase().includes(lower) ||
-            o.value.toLowerCase().includes(lower)
-          );
-          value = found ? found.value : null;
-        }
-      }
-
-      const label = field.label || field.placeholder || field.name || field.selector;
-      if (value !== null && value !== undefined && value !== "") {
-        mappings.push({ field_label: label, selector: field.selector, value: String(value), confidence: 0.95, profileKey: rule.key });
-      } else {
-        mappings.push({ field_label: label, selector: field.selector, value: "", confidence: 0.3, profileKey: rule.key, reason: "no profile value" });
-      }
-
-      matched.add(field.selector);
-      didMatch = false;
-      break;
-    }
-
-    if (!matched.has(field.selector)) {
-      const label = field.label || field.placeholder || field.name || field.selector;
-      mappings.push({ field_label: label, selector: field.selector, value: "", confidence: 0, profileKey: null, reason: "no matching rule" });
-    }
-  }
-
-  return mappings;
 }
 
 // ---- Message handler -------------------------------------------------------
@@ -311,6 +180,7 @@ async function handleAutofill(msg) {
   if (!profile) {
     return { ok: false, error: "No profile configured. Open the Options page to set up your profile." };
   }
+  const resume = await getResume();
 
   const mode = msg.mode || "preview"; // "preview" or "fill"
 
@@ -337,8 +207,8 @@ async function handleAutofill(msg) {
     return { ok: false, error: "No form fields found on this page." };
   }
 
-  // 3. Rule-based matching
-  let mappings = ruleBasedMatch(fields, profile);
+  // 3. Rule-based matching (shared module loaded via importScripts)
+  let mappings = MatchRules.ruleBasedMatch(fields, profile);
 
   // 4. Optional LLM fallback for unmatched fields
   const llmEnabled = await isLlmEnabled();
@@ -351,7 +221,7 @@ async function handleAutofill(msg) {
 
     if (unmatched.length > 0) {
       try {
-        const llmMappings = await llmMapFields(unmatched, profile, apiKey);
+        const llmMappings = await llmMapFields(unmatched, profile, resume, apiKey);
         // Merge LLM results: replace low-confidence rule-based matches
         for (const lm of llmMappings) {
           const idx = mappings.findIndex((m) => m.selector === lm.selector);

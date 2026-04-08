@@ -17,17 +17,15 @@ def main():
         return
 
     answer = input("\nGenerate cover letter? (y/n): ").strip().lower()
-    cover_letter_generated = answer == "y"
-    if cover_letter_generated:
-        cover_letter.main()
+    cover_letter_ok = False
+    if answer == "y":
+        cover_letter_ok = cover_letter.main()
 
     print("\nDone. Files saved to outputs/:")
     print("  - jd_analysis.json")
     print("  - tailored_resume.json")
-    if cover_letter_generated:
+    if cover_letter_ok:
         print("  - cover_letter.txt")
-    else:
-        print("  - cover_letter.txt (if generated)")
 
 
 if __name__ == "__main__":

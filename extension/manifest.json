@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "description": "Automatically fill job application forms using your saved profile data.",
   "permissions": ["activeTab", "storage"],
+  "host_permissions": ["https://api.openai.com/*"],
   "action": {
     "default_popup": "popup/popup.html",
     "default_icon": {
@@ -25,10 +26,10 @@
       "matches": ["<all_urls>"],
       "js": [
         "shared/constants.js",
+        "shared/match_rules.js",
         "shared/field_extraction.js",
         "shared/field_matching.js",
         "shared/event_dispatch.js",
-        "shared/prompts.js",
         "shared/utils.js",
         "content/site_adapters/base_adapter.js",
         "content/site_adapters/generic.js",

@@ -138,6 +138,7 @@ window.JobAutofill = window.JobAutofill || {};
         } else if (confidence > 0) {
           el.style.outline = constants.SKIPPED_BORDER;
           el.style.backgroundColor = constants.SKIPPED_BG;
+          el.setAttribute("data-" + PREFIX + "skipped", "1");
         }
       } catch (e) {
         // Ignore selector errors during preview
@@ -165,17 +166,12 @@ window.JobAutofill = window.JobAutofill || {};
       previewed[j].removeAttribute("data-" + PREFIX + "preview");
     }
 
-    // Also reset skipped-style elements (outline matches our pattern)
-    var all = document.querySelectorAll("input, select, textarea");
-    for (var k = 0; k < all.length; k++) {
-      var el = all[k];
-      if (
-        el.style.outline &&
-        el.style.outline.indexOf("rgba(") !== -1
-      ) {
-        el.style.outline = "";
-        el.style.backgroundColor = "";
-      }
+    // Reset skipped-style elements (only those we marked)
+    var skipped = document.querySelectorAll("[data-" + PREFIX + "skipped]");
+    for (var k = 0; k < skipped.length; k++) {
+      skipped[k].style.outline = "";
+      skipped[k].style.backgroundColor = "";
+      skipped[k].removeAttribute("data-" + PREFIX + "skipped");
     }
   };
 

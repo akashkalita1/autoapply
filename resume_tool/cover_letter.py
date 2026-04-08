@@ -40,20 +40,26 @@ def generate_cover_letter(master_resume, jd_analysis, style_profile):
     return response.choices[0].message.content.strip()
 
 
-def main():
+def main() -> bool:
     master_resume = load_json("data/master_resume.json")
     jd_analysis = load_json("outputs/jd_analysis.json")
     with open("data/style_profile.txt", "r") as f:
         style_profile = f.read()
 
-    cover_letter = generate_cover_letter(master_resume, jd_analysis, style_profile)
+    try:
+        letter = generate_cover_letter(master_resume, jd_analysis, style_profile)
+    except Exception as e:
+        print(f"\nCover letter error: {e}")
+        return False
 
     os.makedirs("outputs", exist_ok=True)
     with open("outputs/cover_letter.txt", "w") as f:
-        f.write(cover_letter)
+        f.write(letter)
 
-    print(cover_letter)
+    print(letter)
+    return True
 
 
 if __name__ == "__main__":
-    main()
+    if not main():
+        raise SystemExit(1)

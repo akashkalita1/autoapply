@@ -40,6 +40,12 @@ python run.py
 python autofill_agent.py "https://example.com/apply"
 ```
 
+All output files are saved to `resume_tool/outputs/`:
+- `jd_analysis.json` -- structured JD analysis
+- `tailored_resume.json` -- tailored resume JSON
+- `tailored_resume.pdf` -- rendered PDF (requires WeasyPrint)
+- `cover_letter.txt` -- generated cover letter (if requested)
+
 ---
 
 ## 2. Chrome Extension
@@ -50,8 +56,12 @@ directly in your browser using your saved profile data.
 ### Features
 
 - **Rule-based field matching** -- works without any API key for ~30 common field types
-  (name, email, phone, address, education, work authorization, LinkedIn, etc.)
-- **Optional LLM fallback** -- uses OpenAI for ambiguous fields when an API key is configured
+  (name, email, phone, address, education, work authorization, LinkedIn, etc.).
+  Matching rules include autocomplete attribute detection, keyword pattern matching,
+  and special handling for boolean fields (sponsorship checkboxes/radios).
+- **Optional LLM fallback** -- uses OpenAI (`gpt-4o-mini`) for ambiguous fields when
+  an API key is configured. The LLM receives both your applicant profile and stored
+  resume JSON for richer context.
 - **Preview mode** -- highlights fields with proposed values before filling; confirm before writing
 - **Framework-safe** -- dispatches proper events for React, Angular, and Vue-based forms
 - **Site adapter pattern** -- built-in support for Greenhouse, Lever, and Workday ATS;
@@ -92,17 +102,22 @@ To enable LLM-powered matching for fields the rule-based system can't handle:
 3. Check "Enable LLM fallback"
 4. Save
 
+For richer LLM results, also paste your `master_resume.json` or `tailored_resume.json`
+into the **Resume Data** section. The LLM uses both your applicant profile and resume
+when mapping ambiguous fields.
+
 ### Architecture
 
 ```
 extension/
   manifest.json              Manifest V3 configuration
-  shared/                    Reusable logic (loaded by content scripts)
+  shared/                    Reusable logic (loaded by both service worker and content scripts)
     constants.js             Thresholds, navigation patterns
+    match_rules.js           Shared matching rules + helpers (single source of truth)
     field_extraction.js      DOM scanner (ported from autofill_agent.py)
-    field_matching.js        Rule-based heuristic matcher
+    field_matching.js        Content-side entry point (delegates to match_rules.js)
     event_dispatch.js        Framework-safe event firing
-    prompts.js               LLM prompts (ported from autofill_agent.py)
+    prompts.js               LLM prompts (loaded by service worker only, not injected into pages)
     utils.js                 Utilities, logging, nav detection
   content/                   Content scripts (injected into pages)
     content_main.js          Message handler, orchestrator
@@ -122,8 +137,9 @@ extension/
     options.html / .css / .js
 ```
 
-**Data flow:** Popup -> Background (loads profile, runs matching) -> Content Script
-(scans DOM, previews, fills) -> Background (stores log) -> Popup (shows results).
+**Data flow:** Popup -> Background (loads profile + resume, runs matching via
+`match_rules.js`) -> Content Script (scans DOM, previews, fills) -> Background
+(stores log) -> Popup (shows results).
 
 ### Adding Support for a New Site
 

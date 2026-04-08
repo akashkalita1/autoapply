@@ -12,7 +12,7 @@ import json
 import re
 from dotenv import dotenv_values
 from openai import OpenAI
-from utils import load_json, save_json
+from utils import save_json
 
 env_config = dotenv_values(".env")
 client = OpenAI(api_key=env_config.get("OPENAI_API_KEY"))
@@ -143,10 +143,8 @@ def main() -> bool:
         return False
 
     preview(result)
-    save_json(result, "jd_analysis.json")
     save_json(result, "outputs/jd_analysis.json")
-    _ = load_json("jd_analysis.json")
-    print("\n✓ Saved to jd_analysis.json")
+    print("\n✓ Saved to outputs/jd_analysis.json")
     return True
 
 
