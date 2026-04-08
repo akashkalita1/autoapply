@@ -154,6 +154,9 @@ window.JobAutofill = window.JobAutofill || {};
     return wc + (signals * 200);
   }
 
+  // Expose to opportunity detector via JA._extractJobDescription
+  JA._extractJobDescription = extractJobDescription;
+
   function extractJobDescription() {
     var method = "none";
     var text = "";
@@ -385,4 +388,28 @@ window.JobAutofill = window.JobAutofill || {};
   }
 
   JA.log("INFO", "Job Autofill content script loaded on " + window.location.href);
+
+  // ---- Opportunity detection on load -----------------------------------------
+
+  // Slight delay to let page finish rendering dynamic content
+  setTimeout(function () {
+    if (JA.detectOpportunities) {
+      JA.detectOpportunities();
+    }
+  }, 1500);
+
+  // Re-detect on significant DOM mutations (for SPAs)
+  var mutationTimer = null;
+  var observer = new MutationObserver(function () {
+    if (mutationTimer) clearTimeout(mutationTimer);
+    mutationTimer = setTimeout(function () {
+      if (JA.resetOpportunityDetection) JA.resetOpportunityDetection();
+      if (JA.detectOpportunities) JA.detectOpportunities();
+    }, 2000);
+  });
+
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+  });
 })();

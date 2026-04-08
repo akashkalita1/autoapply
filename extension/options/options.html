@@ -9,13 +9,13 @@
 <body>
   <div class="container">
     <header class="header">
-      <h1>Job Autofill Settings</h1>
+      <h1>✦ Job Autofill Settings</h1>
       <p class="subtitle">Configure your profile and extension preferences.</p>
     </header>
 
     <!-- Import / Export -->
     <section class="card">
-      <h2>Import Profile</h2>
+      <h2>📥 Import Profile</h2>
       <p class="help-text">
         Import your existing <code>applicant_data.json</code> file from the resume_tool.
       </p>
@@ -28,7 +28,7 @@
 
     <!-- Profile Form -->
     <section class="card">
-      <h2>Applicant Profile</h2>
+      <h2>👤 Applicant Profile</h2>
       <p class="help-text">This data is used to auto-fill job application forms.</p>
 
       <form id="profileForm">
@@ -54,7 +54,7 @@
           </div>
         </div>
 
-        <h3 class="section-heading">Address</h3>
+        <h3 class="section-heading">🏠 Address</h3>
         <div class="form-group">
           <label for="street">Street Address</label>
           <input type="text" id="street" name="street">
@@ -80,7 +80,7 @@
           </div>
         </div>
 
-        <h3 class="section-heading">Links</h3>
+        <h3 class="section-heading">🔗 Links</h3>
         <div class="form-group">
           <label for="linkedin">LinkedIn URL</label>
           <input type="url" id="linkedin" name="linkedin" placeholder="https://linkedin.com/in/...">
@@ -96,7 +96,7 @@
           </div>
         </div>
 
-        <h3 class="section-heading">Education</h3>
+        <h3 class="section-heading">🎓 Education</h3>
         <div class="form-group">
           <label for="university">University / School</label>
           <input type="text" id="university" name="university">
@@ -122,7 +122,7 @@
           </div>
         </div>
 
-        <h3 class="section-heading">Work Authorization</h3>
+        <h3 class="section-heading">📋 Work Authorization</h3>
         <div class="form-group">
           <label for="work_authorization">Authorization Status</label>
           <input type="text" id="work_authorization" name="work_authorization"
@@ -153,7 +153,7 @@
 
     <!-- AI Settings -->
     <section class="card">
-      <h2>AI Settings (Optional)</h2>
+      <h2>🤖 AI Settings</h2>
       <p class="help-text">
         Enable LLM-powered field mapping for fields the rule-based matcher can't handle.
         Requires an OpenAI API key. The extension works fine without this.
@@ -168,10 +168,10 @@
           Enable LLM fallback for unmatched fields
         </label>
       </div>
-      <div class="form-group" style="margin-top: 12px;">
+      <div class="form-group" style="margin-top: 14px;">
         <label for="styleProfile">Cover Letter Style Profile</label>
         <p class="help-text">
-          Controls how the AI writes your cover letters. Customize tone, length, opening/closing style, and what to always/never mention.
+          Controls how the AI writes your cover letters. Customize tone, length, and style.
         </p>
         <textarea id="styleProfile" rows="6" placeholder="Tone: direct, technical..."></textarea>
       </div>
@@ -179,9 +179,9 @@
       <div id="aiSettingsStatus" class="status-msg hidden"></div>
     </section>
 
-    <!-- Resume JSON (optional) -->
+    <!-- Resume JSON -->
     <section class="card">
-      <h2>Resume Data (Optional)</h2>
+      <h2>📄 Resume Data</h2>
       <p class="help-text">
         Paste your <code>master_resume.json</code> or <code>tailored_resume.json</code>
         for richer LLM-based field matching. Not required for basic autofill.
@@ -193,10 +193,10 @@
 
     <!-- Base Resume PDF -->
     <section class="card">
-      <h2>Base Resume PDF</h2>
+      <h2>📎 Base Resume PDF</h2>
       <p class="help-text">
-        Upload the resume PDF you want to use as your “base” resume. The extension will store it locally and
-        use it as the source for job-specific edited resumes.
+        Upload the resume PDF you want to use as your base. The extension stores it locally
+        and can auto-attach it to file upload fields on job applications.
       </p>
       <div class="form-group">
         <label for="baseResumePdf">Upload PDF</label>

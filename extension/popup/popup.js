@@ -1,6 +1,7 @@
 /**
  * Popup script for the Job Autofill extension.
- * Manages the popup UI: profile display, preview/fill triggers, result logs.
+ * Manages the popup UI: profile display, preview/fill triggers, result logs,
+ * collapsible documents, and two-phase AI Optimize flow.
  */
 
 (function () {
@@ -22,6 +23,9 @@
   const llmStatusEl = document.getElementById("llmStatus");
 
   // Documents UI
+  const docsToggle = document.getElementById("docsToggle");
+  const docsArrow = document.getElementById("docsArrow");
+  const docsBody = document.getElementById("docsBody");
   const jobContextLine = document.getElementById("jobContextLine");
   const docsStatus = document.getElementById("docsStatus");
   const docsList = document.getElementById("docsList");
@@ -41,17 +45,25 @@
   const aiCoverLetterSection = document.getElementById("aiCoverLetterSection");
   const aiCoverLetter = document.getElementById("aiCoverLetter");
 
+  // AI Preview (Phase 1) UI
+  const aiPreviewSection = document.getElementById("aiPreviewSection");
+  const aiPreviewStatus = document.getElementById("aiPreviewStatus");
+  const aiPreviewContent = document.getElementById("aiPreviewContent");
+  const btnConfirmOptimize = document.getElementById("btnConfirmOptimize");
+  const btnCancelAiPreview = document.getElementById("btnCancelAiPreview");
+
   let currentMappings = null;
   let currentJobKey = null;
   let currentJobMeta = null;
   let lastAiResult = null;
+  let cachedJdAnalysis = null;
+  let cachedJdText = null;
 
   // ---- Init ----
 
   init();
 
   async function init() {
-    // Load profile and settings
     const settings = await sendBg({ action: "getSettings" });
     if (settings.ok && settings.profile) {
       renderProfile(settings.profile);
@@ -61,11 +73,10 @@
       profileSummary.innerHTML = '<p class="placeholder-text">No profile configured. <a href="#" id="setupLink">Set up now</a></p>';
       const setupLink = document.getElementById("setupLink");
       if (setupLink) {
-        setupLink.addEventListener("click", (e) => { e.preventDefault(); openOptionsPage(); });
+        setupLink.addEventListener("click", function (e) { e.preventDefault(); openOptionsPage(); });
       }
     }
 
-    // Show LLM status and enable AI Optimize if available
     if (settings.ok) {
       const llmReady = settings.llmEnabled && settings.apiKey;
       llmStatusEl.textContent = llmReady ? "LLM: On" : "LLM: Off";
@@ -77,7 +88,6 @@
       }
     }
 
-    // Check content script connectivity
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tab && tab.id) {
@@ -93,19 +103,26 @@
       btnAiOptimize.disabled = true;
     }
 
-    // Load job context + docs list (best-effort)
     await refreshJobContextAndDocs();
   }
 
   // ---- Event Listeners ----
 
-  openOptions.addEventListener("click", (e) => {
+  openOptions.addEventListener("click", function (e) {
     e.preventDefault();
     openOptionsPage();
   });
 
-  btnPreview.addEventListener("click", async () => {
-    setStatus("Scanning...", "active");
+  // Collapsible docs
+  if (docsToggle) {
+    docsToggle.addEventListener("click", function () {
+      var isOpen = docsBody.classList.toggle("open");
+      docsArrow.classList.toggle("open", isOpen);
+    });
+  }
+
+  btnPreview.addEventListener("click", async function () {
+    setStatus("🔵 Scanning…", "active");
     btnPreview.disabled = true;
     btnFill.disabled = true;
 
@@ -114,7 +131,7 @@
     if (result.ok) {
       currentMappings = result.mappings;
       renderPreview(result);
-      setStatus("Preview", "active");
+      setStatus("🟡 Preview", "active");
       if (result.adapterName) {
         adapterNameEl.textContent = "Adapter: " + result.adapterName;
       }
@@ -133,8 +150,8 @@
     btnFill.disabled = false;
   });
 
-  btnFill.addEventListener("click", async () => {
-    setStatus("Filling...", "active");
+  btnFill.addEventListener("click", async function () {
+    setStatus("🔵 Filling…", "active");
     btnFill.disabled = true;
     btnPreview.disabled = true;
 
@@ -142,7 +159,7 @@
 
     if (result.ok) {
       renderResults(result);
-      setStatus("Filled", "success");
+      setStatus("🟢 Filled", "success");
       if (result.jobKey) {
         currentJobKey = result.jobKey;
         currentJobMeta = result.jobMeta || currentJobMeta;
@@ -158,7 +175,7 @@
     btnPreview.disabled = false;
   });
 
-  btnClearPreview.addEventListener("click", async () => {
+  btnClearPreview.addEventListener("click", async function () {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab && tab.id) {
       try { await chrome.tabs.sendMessage(tab.id, { action: "clearPreview" }); } catch (e) { /* ignore */ }
@@ -168,9 +185,9 @@
     setStatus("Ready", "neutral");
   });
 
-  btnConfirmFill.addEventListener("click", async () => {
+  btnConfirmFill.addEventListener("click", async function () {
     if (!currentMappings) return;
-    setStatus("Filling...", "active");
+    setStatus("🔵 Filling…", "active");
     btnConfirmFill.disabled = true;
 
     const result = await sendBg({ action: "confirmFill", mappings: currentMappings });
@@ -178,7 +195,7 @@
     if (result.ok) {
       previewSection.classList.add("hidden");
       renderResults(result);
-      setStatus("Filled", "success");
+      setStatus("🟢 Filled", "success");
       currentMappings = null;
       if (result.jobKey) {
         currentJobKey = result.jobKey;
@@ -196,7 +213,7 @@
 
   // Documents: uploads & save text
   if (uploadEditedResume) {
-    uploadEditedResume.addEventListener("change", async (e) => {
+    uploadEditedResume.addEventListener("change", async function (e) {
       const file = e.target.files && e.target.files[0];
       uploadEditedResume.value = "";
       if (!file) return;
@@ -205,7 +222,7 @@
   }
 
   if (uploadCoverLetterFile) {
-    uploadCoverLetterFile.addEventListener("change", async (e) => {
+    uploadCoverLetterFile.addEventListener("change", async function (e) {
       const file = e.target.files && e.target.files[0];
       uploadCoverLetterFile.value = "";
       if (!file) return;
@@ -214,18 +231,12 @@
   }
 
   if (btnSaveCoverLetterText) {
-    btnSaveCoverLetterText.addEventListener("click", async () => {
+    btnSaveCoverLetterText.addEventListener("click", async function () {
       const text = (coverLetterText && coverLetterText.value) ? coverLetterText.value.trim() : "";
-      if (!text) {
-        setDocsStatus("Paste cover letter text first.", false);
-        return;
-      }
-      if (!currentJobKey) {
-        setDocsStatus("No job detected for this tab yet.", false);
-        return;
-      }
+      if (!text) { setDocsStatus("Paste cover letter text first.", false); return; }
+      if (!currentJobKey) { setDocsStatus("No job detected for this tab yet.", false); return; }
       const doc = {
-        id: (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : ("doc_" + Date.now()),
+        id: genId(),
         name: "cover-letter.txt",
         mime: "text/plain",
         size: text.length,
@@ -237,7 +248,7 @@
         jobKey: currentJobKey,
         jobMeta: currentJobMeta,
         docType: "coverLetter",
-        doc,
+        doc: doc,
       });
       if (resp.ok) {
         coverLetterText.value = "";
@@ -250,7 +261,7 @@
   }
 
   if (docsList) {
-    docsList.addEventListener("click", async (e) => {
+    docsList.addEventListener("click", async function (e) {
       const btn = e.target && e.target.closest ? e.target.closest("button[data-action]") : null;
       if (!btn) return;
       const action = btn.getAttribute("data-action");
@@ -277,41 +288,38 @@
     });
   }
 
-  // ---- AI Optimize ----
+  // ---- AI Optimize (Two-Phase) ----
 
   if (btnAiOptimize) {
-    btnAiOptimize.addEventListener("click", async () => {
-      setStatus("Optimizing...", "active");
+    btnAiOptimize.addEventListener("click", async function () {
+      setStatus("🔵 Analyzing…", "active");
       btnAiOptimize.disabled = true;
-      aiSection.classList.remove("hidden");
-      aiGapSection.classList.add("hidden");
-      aiDiffSection.classList.add("hidden");
-      aiCoverLetterSection.classList.add("hidden");
-      aiStatus.innerHTML = '<span class="ai-spinner"></span> Extracting job description...';
-      aiStatus.className = "ai-status ai-status-loading";
+      aiSection.classList.add("hidden");
+      aiPreviewSection.classList.remove("hidden");
+      aiPreviewContent.innerHTML = "";
+      btnConfirmOptimize.disabled = true;
+      aiPreviewStatus.innerHTML = '<span class="ai-spinner"></span> Extracting job description…';
+      aiPreviewStatus.className = "ai-status ai-status-loading";
 
-      // 1. Extract JD from current page
-      let jdResult;
+      // Extract JD
+      var jdResult;
       try {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (!tab || !tab.id) {
-          showAiError("No active tab found.");
-          return;
-        }
+        if (!tab || !tab.id) { showAiPreviewError("No active tab found."); return; }
         jdResult = await chrome.tabs.sendMessage(tab.id, { action: "extractJobDescription" });
       } catch (e) {
-        showAiError("Could not reach content script. Try refreshing the page.");
+        showAiPreviewError("Could not reach content script. Try refreshing the page.");
         return;
       }
 
       if (!jdResult || !jdResult.ok || jdResult.wordCount < 50) {
-        showAiError("Could not extract a job description from this page (found " + (jdResult ? jdResult.wordCount : 0) + " words). Try a page with a full job posting.");
+        showAiPreviewError("Could not extract a job description from this page (found " + (jdResult ? jdResult.wordCount : 0) + " words).");
         return;
       }
 
-      aiStatus.innerHTML = '<span class="ai-spinner"></span> Analyzing job & tailoring resume... (this takes 15-30s)';
+      cachedJdText = jdResult.jdText;
 
-      // 2. Ensure we have job context
+      // Ensure job context
       if (!currentJobKey) {
         try {
           const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -323,20 +331,64 @@
               renderJobContextLine();
             }
           }
-        } catch (e) { /* continue anyway */ }
+        } catch (e) { /* continue */ }
       }
 
-      // 3. Call background to generate documents
-      let result;
+      aiPreviewStatus.innerHTML = '<span class="ai-spinner"></span> Analyzing requirements…';
+
+      // Phase 1: gap analysis
+      var gapResult;
       try {
-        result = await sendBg({
-          action: "generateAiDocuments",
-          jdText: jdResult.jdText,
+        gapResult = await sendBg({
+          action: "analyzeResumeGaps",
+          jdText: cachedJdText,
           jobKey: currentJobKey,
           jobMeta: currentJobMeta,
         });
       } catch (e) {
-        showAiError("AI generation failed: " + String(e));
+        showAiPreviewError("Analysis failed: " + String(e));
+        return;
+      }
+
+      if (!gapResult || !gapResult.ok) {
+        showAiPreviewError(gapResult ? gapResult.error : "No response from background.");
+        return;
+      }
+
+      cachedJdAnalysis = gapResult.jdAnalysis;
+      renderAiPreview(gapResult);
+      aiPreviewStatus.textContent = "Analysis complete — review before optimizing.";
+      aiPreviewStatus.className = "ai-status ai-status-success";
+      btnConfirmOptimize.disabled = false;
+      setStatus("🔍 Review", "active");
+      btnAiOptimize.disabled = false;
+    });
+  }
+
+  if (btnConfirmOptimize) {
+    btnConfirmOptimize.addEventListener("click", async function () {
+      if (!cachedJdAnalysis || !cachedJdText) return;
+      setStatus("🔵 Optimizing…", "active");
+      btnConfirmOptimize.disabled = true;
+      aiPreviewSection.classList.add("hidden");
+      aiSection.classList.remove("hidden");
+      aiGapSection.classList.add("hidden");
+      aiDiffSection.classList.add("hidden");
+      aiCoverLetterSection.classList.add("hidden");
+      aiStatus.innerHTML = '<span class="ai-spinner"></span> Tailoring resume & cover letter… (15-30s)';
+      aiStatus.className = "ai-status ai-status-loading";
+
+      var result;
+      try {
+        result = await sendBg({
+          action: "executeResumeOptimization",
+          jdText: cachedJdText,
+          jdAnalysis: cachedJdAnalysis,
+          jobKey: currentJobKey,
+          jobMeta: currentJobMeta,
+        });
+      } catch (e) {
+        showAiError("Optimization failed: " + String(e));
         return;
       }
 
@@ -346,16 +398,67 @@
       }
 
       lastAiResult = result;
-
-      // 4. Render results
       renderAiResults(result);
-
-      // 5. Auto-download + save to storage
       await saveAndDownloadAiDocs(result);
+      setStatus("🟢 Optimized", "success");
+      btnConfirmOptimize.disabled = false;
+    });
+  }
 
-      setStatus("Optimized", "success");
+  if (btnCancelAiPreview) {
+    btnCancelAiPreview.addEventListener("click", function () {
+      aiPreviewSection.classList.add("hidden");
+      cachedJdAnalysis = null;
+      cachedJdText = null;
+      setStatus("Ready", "neutral");
       btnAiOptimize.disabled = false;
     });
+  }
+
+  function showAiPreviewError(message) {
+    aiPreviewStatus.textContent = message;
+    aiPreviewStatus.className = "ai-status ai-status-error";
+    btnConfirmOptimize.disabled = true;
+    btnAiOptimize.disabled = false;
+    setStatus("Error", "error");
+  }
+
+  function renderAiPreview(gapResult) {
+    var html = "";
+    var missing = gapResult.missingSkills || [];
+    var quals = gapResult.missingQualifications || [];
+    var keywords = gapResult.missingKeywords || [];
+
+    if (missing.length > 0) {
+      html += '<div class="ai-preview-row">' +
+        '<span class="ai-preview-emoji">❌</span>' +
+        '<span class="ai-preview-label">Missing skills</span>' +
+        '<span class="ai-preview-items">' + escHtml(missing.join(", ")) + '</span>' +
+        '</div>';
+    }
+    if (quals.length > 0) {
+      html += '<div class="ai-preview-row">' +
+        '<span class="ai-preview-emoji">⚠️</span>' +
+        '<span class="ai-preview-label">Gaps</span>' +
+        '<span class="ai-preview-items">' + escHtml(quals.join(", ")) + '</span>' +
+        '</div>';
+    }
+    if (keywords.length > 0) {
+      html += '<div class="ai-preview-row">' +
+        '<span class="ai-preview-emoji">🔑</span>' +
+        '<span class="ai-preview-label">Keywords</span>' +
+        '<span class="ai-preview-items">' + escHtml(keywords.join(", ")) + '</span>' +
+        '</div>';
+    }
+
+    if (!html) {
+      html = '<div class="ai-preview-row">' +
+        '<span class="ai-preview-emoji">✅</span>' +
+        '<span class="ai-preview-items">Your resume looks well-matched! Optimization can still refine wording.</span>' +
+        '</div>';
+    }
+
+    aiPreviewContent.innerHTML = html;
   }
 
   function showAiError(message) {
@@ -366,58 +469,58 @@
   }
 
   function renderAiResults(result) {
-    aiStatus.textContent = "Done! Resume and cover letter generated.";
+    aiStatus.textContent = "✅ Resume and cover letter generated.";
     aiStatus.className = "ai-status ai-status-success";
 
-    // Requirements gap list
-    const gaps = result.requirementsGaps || [];
+    var gaps = result.requirementsGaps || [];
     if (gaps.length > 0) {
       aiGapSection.classList.remove("hidden");
-      let gapHtml = "";
-      for (const gap of gaps) {
-        let statusClass = "gap-met";
-        let statusLabel = "Met";
-        if (gap.status === "partially_met") { statusClass = "gap-partial"; statusLabel = "Partial"; }
-        else if (gap.status === "not_met") { statusClass = "gap-missing"; statusLabel = "Not Met"; }
-        else if (gap.status === "filled_by_generated_project") { statusClass = "gap-generated"; statusLabel = "Generated"; }
+      var gapHtml = "";
+      for (var i = 0; i < gaps.length; i++) {
+        var gap = gaps[i];
+        var statusClass = "gap-met";
+        var statusLabel = "✅ Met";
+        if (gap.status === "partially_met") { statusClass = "gap-partial"; statusLabel = "⚠️ Partial"; }
+        else if (gap.status === "not_met") { statusClass = "gap-missing"; statusLabel = "❌ Missing"; }
+        else if (gap.status === "filled_by_generated_project") { statusClass = "gap-generated"; statusLabel = "🔮 Generated"; }
 
         gapHtml +=
           '<div class="gap-row ' + statusClass + '">' +
-          '<span class="gap-status-badge">' + escHtml(statusLabel) + "</span>" +
-          '<span class="gap-text">' + escHtml(gap.requirement || "") + "</span>" +
-          (gap.notes ? '<span class="gap-notes">' + escHtml(gap.notes) + "</span>" : "") +
-          "</div>";
+          '<span class="gap-status-badge">' + statusLabel + '</span>' +
+          '<span class="gap-text">' + escHtml(gap.requirement || "") + '</span>' +
+          (gap.notes ? '<span class="gap-notes">' + escHtml(gap.notes) + '</span>' : '') +
+          '</div>';
       }
       aiGapList.innerHTML = gapHtml;
     }
 
-    // Resume diff
-    const diff = result.diff || [];
+    var diff = result.diff || [];
     if (diff.length > 0) {
       aiDiffSection.classList.remove("hidden");
-      let diffHtml = "";
-      for (const entry of diff) {
-        let headerClass = entry.generated ? "diff-header diff-generated-header" : "diff-header";
+      var diffHtml = "";
+      for (var j = 0; j < diff.length; j++) {
+        var entry = diff[j];
+        var headerClass = entry.generated ? "diff-header diff-generated-header" : "diff-header";
         diffHtml += '<div class="' + headerClass + '">' + escHtml(entry.header);
         if (entry.generated) {
-          diffHtml += ' <span class="diff-generated-badge">Generated &mdash; review before submitting</span>';
+          diffHtml += ' <span class="diff-generated-badge">Generated</span>';
         }
-        diffHtml += "</div>";
+        diffHtml += '</div>';
 
-        for (const b of entry.bullets) {
+        for (var k = 0; k < entry.bullets.length; k++) {
+          var b = entry.bullets[k];
           if (b.type === "changed") {
             diffHtml +=
-              '<div class="diff-line diff-removed">&minus; ' + escHtml(truncate(b.origText, 120)) + "</div>" +
-              '<div class="diff-line diff-added">&plus; ' + escHtml(truncate(b.newText, 120)) + "</div>";
+              '<div class="diff-line diff-removed">&minus; ' + escHtml(truncate(b.origText, 120)) + '</div>' +
+              '<div class="diff-line diff-added">&plus; ' + escHtml(truncate(b.newText, 120)) + '</div>';
           } else if (b.type === "added") {
-            diffHtml += '<div class="diff-line diff-added">&plus; ' + escHtml(truncate(b.newText, 120)) + "</div>";
+            diffHtml += '<div class="diff-line diff-added">&plus; ' + escHtml(truncate(b.newText, 120)) + '</div>';
           }
         }
       }
       aiResumeDiff.innerHTML = diffHtml;
     }
 
-    // Cover letter
     if (result.coverLetterText) {
       aiCoverLetterSection.classList.remove("hidden");
       aiCoverLetter.value = result.coverLetterText;
@@ -425,63 +528,53 @@
   }
 
   async function saveAndDownloadAiDocs(result) {
-    const JA = window.JobAutofill || {};
-    const settings = await sendBg({ action: "getSettings" });
-    const personal = (settings.ok && settings.resume && settings.resume.personal) ? settings.resume.personal : {};
-    const now = new Date().toISOString();
+    var JA = window.JobAutofill || {};
+    var settings = await sendBg({ action: "getSettings" });
+    var personal = (settings.ok && settings.resume && settings.resume.personal) ? settings.resume.personal : {};
+    var now = new Date().toISOString();
 
-    // Build HTML for resume
     if (result.tailoredResume && JA.buildResumeHtml) {
-      const resumeHtml = JA.buildResumeHtml(result.tailoredResume);
-      const resumeB64 = base64FromUtf8(resumeHtml);
-
-      // Download to user's computer
+      var resumeHtml = JA.buildResumeHtml(result.tailoredResume);
+      var resumeB64 = base64FromUtf8(resumeHtml);
       downloadHtmlAsFile(resumeHtml, buildAiFilename("tailored-resume", "html"));
 
-      // Save to job bucket
       if (currentJobKey) {
-        const doc = {
-          id: genId(),
-          name: buildAiFilename("tailored-resume", "html"),
-          mime: "text/html",
-          size: resumeHtml.length,
-          createdAt: now,
-          dataBase64: resumeB64,
-        };
         await sendBg({
           action: "saveJobDocument",
           jobKey: currentJobKey,
           jobMeta: currentJobMeta,
           docType: "editedResume",
-          doc,
+          doc: {
+            id: genId(),
+            name: buildAiFilename("tailored-resume", "html"),
+            mime: "text/html",
+            size: resumeHtml.length,
+            createdAt: now,
+            dataBase64: resumeB64,
+          },
         });
       }
     }
 
-    // Build HTML for cover letter
     if (result.coverLetterText && JA.buildCoverLetterHtml) {
-      const clHtml = JA.buildCoverLetterHtml(result.coverLetterText, currentJobMeta, personal);
-      const clB64 = base64FromUtf8(clHtml);
-
-      // Download to user's computer
+      var clHtml = JA.buildCoverLetterHtml(result.coverLetterText, currentJobMeta, personal);
+      var clB64 = base64FromUtf8(clHtml);
       downloadHtmlAsFile(clHtml, buildAiFilename("cover-letter", "html"));
 
-      // Save to job bucket
       if (currentJobKey) {
-        const doc = {
-          id: genId(),
-          name: buildAiFilename("cover-letter", "html"),
-          mime: "text/html",
-          size: clHtml.length,
-          createdAt: now,
-          dataBase64: clB64,
-        };
         await sendBg({
           action: "saveJobDocument",
           jobKey: currentJobKey,
           jobMeta: currentJobMeta,
           docType: "coverLetter",
-          doc,
+          doc: {
+            id: genId(),
+            name: buildAiFilename("cover-letter", "html"),
+            mime: "text/html",
+            size: clHtml.length,
+            createdAt: now,
+            dataBase64: clB64,
+          },
         });
       }
     }
@@ -490,21 +583,21 @@
   }
 
   function downloadHtmlAsFile(htmlString, filename) {
-    const blob = new Blob([htmlString], { type: "text/html" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
+    var blob = new Blob([htmlString], { type: "text/html" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
     a.href = url;
     a.download = filename;
     a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
   }
 
   function buildAiFilename(kind, ext) {
-    const company = safeFilePart(currentJobMeta && currentJobMeta.company);
-    const title = safeFilePart(currentJobMeta && currentJobMeta.title);
-    const date = isoDatePart(new Date().toISOString());
-    const parts = [company, title, date, kind].filter(Boolean);
-    const base = parts.length > 1 ? parts.join("-") : (date + "-" + kind);
+    var company = safeFilePart(currentJobMeta && currentJobMeta.company);
+    var title = safeFilePart(currentJobMeta && currentJobMeta.title);
+    var date = isoDatePart(new Date().toISOString());
+    var parts = [company, title, date, kind].filter(Boolean);
+    var base = parts.length > 1 ? parts.join("-") : (date + "-" + kind);
     return base + "." + ext;
   }
 
@@ -515,44 +608,52 @@
   // ---- Render helpers ----
 
   function renderProfile(profile) {
-    const name = [profile.first_name, profile.last_name].filter(Boolean).join(" ") || "No name";
-    const details = [profile.email, profile.phone].filter(Boolean).join(" | ");
+    var first = profile.first_name || "";
+    var last = profile.last_name || "";
+    var name = [first, last].filter(Boolean).join(" ") || "No name";
+    var initial = (first.charAt(0) || last.charAt(0) || "?").toUpperCase();
+    var details = [profile.email, profile.phone].filter(Boolean).join(" · ");
+
     profileSummary.innerHTML =
-      '<div class="name">' + escHtml(name) + "</div>" +
-      '<div class="detail">' + escHtml(details || "No contact info") + "</div>";
+      '<div class="profile-avatar">' + escHtml(initial) + '</div>' +
+      '<div class="profile-info">' +
+        '<div class="name">' + escHtml(name) + '</div>' +
+        '<div class="detail">' + escHtml(details || "No contact info") + '</div>' +
+      '</div>';
   }
 
   function renderPreview(result) {
     previewSection.classList.remove("hidden");
     resultsSection.classList.add("hidden");
 
-    const mappings = result.mappings || [];
-    const willFill = mappings.filter((m) => m.confidence >= 0.8 && m.value);
-    const willSkip = mappings.filter((m) => m.confidence < 0.8 || !m.value);
+    var mappings = result.mappings || [];
+    var willFill = mappings.filter(function (m) { return m.confidence >= 0.8 && m.value; });
+    var willSkip = mappings.filter(function (m) { return m.confidence < 0.8 || !m.value; });
 
     previewStats.innerHTML =
-      '<span class="stat"><span class="stat-dot stat-dot-total"></span> ' + result.fieldCount + " fields</span>" +
-      '<span class="stat"><span class="stat-dot stat-dot-fill"></span> ' + willFill.length + " to fill</span>" +
-      '<span class="stat"><span class="stat-dot stat-dot-skip"></span> ' + willSkip.length + " skipped</span>";
+      '<span class="stat">📋 ' + result.fieldCount + ' fields</span>' +
+      '<span class="stat">✅ ' + willFill.length + ' to fill</span>' +
+      '<span class="stat">⏭️ ' + willSkip.length + ' skipped</span>';
 
-    // Nav button warning
-    let html = "";
+    var html = "";
     if (result.navButton && result.navButton.type === "submit") {
-      html += '<div class="warning-banner">Submit button detected: "' +
+      html += '<div class="warning-banner">⚠️ Submit button detected: "' +
         escHtml(result.navButton.text) + '". This extension will NOT auto-submit.</div>';
     }
 
-    for (const m of willFill) {
+    for (var i = 0; i < willFill.length; i++) {
+      var m = willFill[i];
       html += '<div class="result-item">' +
-        '<span class="result-field" title="' + escHtml(m.field_label) + '">' + escHtml(truncate(m.field_label, 30)) + "</span>" +
-        '<span class="result-value" title="' + escHtml(m.value) + '">' + escHtml(truncate(m.value, 30)) + "</span>" +
-        "</div>";
+        '<span class="result-field" title="' + escHtml(m.field_label) + '">' + escHtml(truncate(m.field_label, 30)) + '</span>' +
+        '<span class="result-value" title="' + escHtml(m.value) + '">' + escHtml(truncate(m.value, 30)) + '</span>' +
+        '</div>';
     }
-    for (const m of willSkip) {
+    for (var j = 0; j < willSkip.length; j++) {
+      var s = willSkip[j];
       html += '<div class="result-item">' +
-        '<span class="result-field" title="' + escHtml(m.field_label) + '">' + escHtml(truncate(m.field_label, 30)) + "</span>" +
-        '<span class="result-value skipped">' + escHtml(m.reason || "skipped") + "</span>" +
-        "</div>";
+        '<span class="result-field" title="' + escHtml(s.field_label) + '">' + escHtml(truncate(s.field_label, 30)) + '</span>' +
+        '<span class="result-value skipped">' + escHtml(s.reason || "skipped") + '</span>' +
+        '</div>';
     }
 
     previewList.innerHTML = html;
@@ -562,25 +663,27 @@
     resultsSection.classList.remove("hidden");
     previewSection.classList.add("hidden");
 
-    const filled = result.filled || [];
-    const skipped = result.skipped || [];
+    var filled = result.filled || [];
+    var skipped = result.skipped || [];
 
     resultStats.innerHTML =
-      '<span class="stat"><span class="stat-dot stat-dot-fill"></span> ' + filled.length + " filled</span>" +
-      '<span class="stat"><span class="stat-dot stat-dot-skip"></span> ' + skipped.length + " skipped</span>";
+      '<span class="stat">✅ ' + filled.length + ' filled</span>' +
+      '<span class="stat">⏭️ ' + skipped.length + ' skipped</span>';
 
-    let html = "";
-    for (const f of filled) {
+    var html = "";
+    for (var i = 0; i < filled.length; i++) {
+      var f = filled[i];
       html += '<div class="result-item">' +
-        '<span class="result-field" title="' + escHtml(f.field) + '">' + escHtml(truncate(f.field, 30)) + "</span>" +
-        '<span class="result-value" title="' + escHtml(f.value) + '">' + escHtml(truncate(f.value, 30)) + "</span>" +
-        "</div>";
+        '<span class="result-field" title="' + escHtml(f.field) + '">' + escHtml(truncate(f.field, 30)) + '</span>' +
+        '<span class="result-value" title="' + escHtml(f.value) + '">' + escHtml(truncate(f.value, 30)) + '</span>' +
+        '</div>';
     }
-    for (const s of skipped) {
+    for (var j = 0; j < skipped.length; j++) {
+      var sk = skipped[j];
       html += '<div class="result-item">' +
-        '<span class="result-field" title="' + escHtml(s.field) + '">' + escHtml(truncate(s.field, 30)) + "</span>" +
-        '<span class="result-value skipped">' + escHtml(s.reason || "skipped") + "</span>" +
-        "</div>";
+        '<span class="result-field" title="' + escHtml(sk.field) + '">' + escHtml(truncate(sk.field, 30)) + '</span>' +
+        '<span class="result-value skipped">' + escHtml(sk.reason || "skipped") + '</span>' +
+        '</div>';
     }
 
     resultList.innerHTML = html;
@@ -591,7 +694,7 @@
     previewSection.classList.add("hidden");
     resultStats.innerHTML = "";
     resultList.innerHTML = '<div class="result-item"><span class="result-value skipped">' +
-      escHtml(message || "Unknown error") + "</span></div>";
+      escHtml(message || "Unknown error") + '</span></div>';
   }
 
   // ---- Utilities ----
@@ -602,8 +705,8 @@
   }
 
   function sendBg(msg) {
-    return new Promise((resolve) => {
-      chrome.runtime.sendMessage(msg, (resp) => {
+    return new Promise(function (resolve) {
+      chrome.runtime.sendMessage(msg, function (resp) {
         resolve(resp || { ok: false, error: "No response from background" });
       });
     });
@@ -630,7 +733,6 @@
         renderDocsList(null);
       }
     } catch (e) {
-      // Content script not reachable
       currentJobKey = null;
       currentJobMeta = null;
       renderJobContextLine();
@@ -641,15 +743,15 @@
   function renderJobContextLine() {
     if (!jobContextLine) return;
     if (!currentJobKey) {
-      jobContextLine.textContent = "No job detected on this tab yet.";
+      jobContextLine.textContent = "No job detected on this tab.";
       if (uploadEditedResume) uploadEditedResume.disabled = true;
       if (uploadCoverLetterFile) uploadCoverLetterFile.disabled = true;
       if (btnSaveCoverLetterText) btnSaveCoverLetterText.disabled = true;
       return;
     }
-    const company = (currentJobMeta && currentJobMeta.company) ? currentJobMeta.company : "";
-    const title = (currentJobMeta && currentJobMeta.title) ? currentJobMeta.title : "";
-    const parts = [company, title].filter(Boolean);
+    var company = (currentJobMeta && currentJobMeta.company) ? currentJobMeta.company : "";
+    var title = (currentJobMeta && currentJobMeta.title) ? currentJobMeta.title : "";
+    var parts = [company, title].filter(Boolean);
     jobContextLine.textContent = parts.length ? parts.join(" — ") : "Job key: " + currentJobKey;
     if (uploadEditedResume) uploadEditedResume.disabled = false;
     if (uploadCoverLetterFile) uploadCoverLetterFile.disabled = false;
@@ -659,15 +761,12 @@
   function setDocsStatus(text, ok) {
     if (!docsStatus) return;
     docsStatus.textContent = text || "";
-    docsStatus.style.color = ok ? "#065f46" : "#991b1b";
+    docsStatus.style.color = ok ? "#059669" : "#ef4444";
   }
 
   async function refreshDocsList() {
-    if (!currentJobKey) {
-      renderDocsList(null);
-      return;
-    }
-    const resp = await sendBg({ action: "getJobDocuments", jobKey: currentJobKey });
+    if (!currentJobKey) { renderDocsList(null); return; }
+    var resp = await sendBg({ action: "getJobDocuments", jobKey: currentJobKey });
     if (!resp.ok) {
       setDocsStatus(resp.error || "Failed to load documents.", false);
       renderDocsList(null);
@@ -684,76 +783,66 @@
       return;
     }
     if (!bucket) {
-      docsList.innerHTML = '<div class="result-item"><span class="result-value skipped">No documents saved for this job yet.</span></div>';
+      docsList.innerHTML = '<div class="result-item"><span class="result-value skipped">No documents saved yet.</span></div>';
       return;
     }
 
-    const edited = Array.isArray(bucket.editedResumes) ? bucket.editedResumes : [];
-    const covers = Array.isArray(bucket.coverLetters) ? bucket.coverLetters : [];
+    var edited = Array.isArray(bucket.editedResumes) ? bucket.editedResumes : [];
+    var covers = Array.isArray(bucket.coverLetters) ? bucket.coverLetters : [];
+    var html = "";
 
-    let html = "";
-    html += '<div class="result-item"><span class="result-field">Edited resumes</span><span class="result-value">' + edited.length + "</span></div>";
-    for (const d of edited) {
-      html += renderDocRow("editedResume", d);
+    if (edited.length > 0) {
+      html += '<div class="result-item"><span class="result-field">📄 Resumes</span><span class="result-value">' + edited.length + '</span></div>';
+      for (var i = 0; i < edited.length; i++) { html += renderDocRow("editedResume", edited[i]); }
     }
-    html += '<div class="result-item"><span class="result-field">Cover letters</span><span class="result-value">' + covers.length + "</span></div>";
-    for (const d2 of covers) {
-      html += renderDocRow("coverLetter", d2);
+    if (covers.length > 0) {
+      html += '<div class="result-item"><span class="result-field">✉️ Cover Letters</span><span class="result-value">' + covers.length + '</span></div>';
+      for (var j = 0; j < covers.length; j++) { html += renderDocRow("coverLetter", covers[j]); }
+    }
+    if (!html) {
+      html = '<div class="result-item"><span class="result-value skipped">No documents saved yet.</span></div>';
     }
     docsList.innerHTML = html;
   }
 
   function renderDocRow(docType, d) {
-    const label = d && d.name ? d.name : "(unnamed)";
-    const createdAt = d && d.createdAt ? new Date(d.createdAt).toLocaleString() : "";
-    const right = createdAt ? createdAt : "";
-    const id = d && d.id ? d.id : "";
+    var label = d && d.name ? d.name : "(unnamed)";
+    var createdAt = d && d.createdAt ? new Date(d.createdAt).toLocaleString() : "";
+    var id = d && d.id ? d.id : "";
     return (
       '<div class="result-item">' +
-      '<span class="result-field" title="' + escHtml(label) + '">' + escHtml(truncate(label, 22)) + "</span>" +
+      '<span class="result-field" title="' + escHtml(label) + '">' + escHtml(truncate(label, 22)) + '</span>' +
       '<span class="result-value" style="display:flex;gap:6px;align-items:center;justify-content:flex-end;">' +
-      '<span class="text-muted" style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escHtml(right) + "</span>" +
-      '<button class="btn-text" data-action="download" data-doc-type="' + docType + '" data-id="' + escHtml(id) + '">Download</button>' +
-      '<button class="btn-text" data-action="delete" data-doc-type="' + docType + '" data-id="' + escHtml(id) + '">Delete</button>' +
-      "</span>" +
-      "</div>"
+      '<span class="text-muted" style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escHtml(createdAt) + '</span>' +
+      '<button class="btn-text" data-action="download" data-doc-type="' + docType + '" data-id="' + escHtml(id) + '">↓</button>' +
+      '<button class="btn-text" data-action="delete" data-doc-type="' + docType + '" data-id="' + escHtml(id) + '">✕</button>' +
+      '</span></div>'
     );
   }
 
   async function saveDocFromFile(docType, file) {
-    if (!currentJobKey) {
-      setDocsStatus("No job detected for this tab yet.", false);
-      return;
-    }
+    if (!currentJobKey) { setDocsStatus("No job detected for this tab yet.", false); return; }
     if (!file) return;
-
-    if (docType === "editedResume" && file.type !== "application/pdf") {
-      setDocsStatus("Edited resume must be a PDF.", false);
-      return;
-    }
-    if (docType === "coverLetter" && file.type !== "application/pdf") {
-      setDocsStatus("Cover letter file must be a PDF.", false);
-      return;
-    }
+    if (docType === "editedResume" && file.type !== "application/pdf") { setDocsStatus("Resume must be a PDF.", false); return; }
+    if (docType === "coverLetter" && file.type !== "application/pdf") { setDocsStatus("Cover letter must be a PDF.", false); return; }
 
     try {
-      setDocsStatus("Saving...", true);
-      const dataBase64 = await readFileAsBase64(file);
-      const doc = {
-        id: (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : ("doc_" + Date.now()),
+      setDocsStatus("Saving…", true);
+      var dataBase64 = await readFileAsBase64(file);
+      var doc = {
+        id: genId(),
         name: file.name || (docType === "editedResume" ? "edited-resume.pdf" : "cover-letter.pdf"),
         mime: file.type || "application/pdf",
         size: file.size || 0,
         createdAt: new Date().toISOString(),
-        dataBase64,
+        dataBase64: dataBase64,
       };
-
-      const resp = await sendBg({
+      var resp = await sendBg({
         action: "saveJobDocument",
         jobKey: currentJobKey,
         jobMeta: currentJobMeta,
         docType: docType,
-        doc,
+        doc: doc,
       });
       if (resp.ok) {
         setDocsStatus("Saved.", true);
@@ -768,114 +857,94 @@
 
   async function downloadJobDoc(docType, id) {
     if (!currentJobKey) return;
-    const resp = await sendBg({ action: "getJobDocuments", jobKey: currentJobKey });
-    if (!resp.ok || !resp.bucket) {
-      setDocsStatus(resp.error || "Failed to load documents.", false);
-      return;
-    }
-    const bucket = resp.bucket;
-    const arr = docType === "editedResume" ? (bucket.editedResumes || []) : (bucket.coverLetters || []);
-    const doc = arr.find((d) => d && d.id === id);
-    if (!doc || !doc.dataBase64) {
-      setDocsStatus("Document not found.", false);
-      return;
-    }
-    const filename = buildJobFilename(currentJobMeta, docType, doc);
+    var resp = await sendBg({ action: "getJobDocuments", jobKey: currentJobKey });
+    if (!resp.ok || !resp.bucket) { setDocsStatus(resp.error || "Failed to load.", false); return; }
+    var arr = docType === "editedResume" ? (resp.bucket.editedResumes || []) : (resp.bucket.coverLetters || []);
+    var doc = arr.find(function (d) { return d && d.id === id; });
+    if (!doc || !doc.dataBase64) { setDocsStatus("Document not found.", false); return; }
+    var filename = buildJobFilename(currentJobMeta, docType, doc);
     downloadBase64(doc.dataBase64, filename, doc.mime || "application/octet-stream");
     setDocsStatus("Download started.", true);
   }
 
   function buildJobFilename(jobMeta, docType, doc) {
-    const company = safeFilePart(jobMeta && jobMeta.company);
-    const title = safeFilePart(jobMeta && jobMeta.title);
-    const date = isoDatePart(doc && doc.createdAt);
-    const kind = docType === "editedResume" ? "edited-resume" : "cover-letter";
-    const ext = inferExt(doc && doc.name, doc && doc.mime);
-    const parts = [company, title, date, kind].filter(Boolean);
-    const base = parts.length ? parts.join("-") : ("job-" + (date || "document") + "-" + kind);
+    var company = safeFilePart(jobMeta && jobMeta.company);
+    var title = safeFilePart(jobMeta && jobMeta.title);
+    var date = isoDatePart(doc && doc.createdAt);
+    var kind = docType === "editedResume" ? "edited-resume" : "cover-letter";
+    var ext = inferExt(doc && doc.name, doc && doc.mime);
+    var parts = [company, title, date, kind].filter(Boolean);
+    var base = parts.length ? parts.join("-") : ("job-" + (date || "document") + "-" + kind);
     return base + "." + ext;
   }
 
   function safeFilePart(s) {
-    return String(s || "")
-      .trim()
-      .replace(/[\/\\?%*:|"<>]/g, "")
-      .replace(/\s+/g, "-")
-      .slice(0, 40);
+    return String(s || "").trim().replace(/[\/\\?%*:|"<>]/g, "").replace(/\s+/g, "-").slice(0, 40);
   }
 
   function isoDatePart(iso) {
     if (!iso) return "";
-    const d = new Date(iso);
+    var d = new Date(iso);
     if (isNaN(d.getTime())) return "";
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
-    return "" + yyyy + mm + dd;
+    return "" + d.getFullYear() + String(d.getMonth() + 1).padStart(2, "0") + String(d.getDate()).padStart(2, "0");
   }
 
   function inferExt(name, mime) {
-    const n = String(name || "").toLowerCase();
+    var n = String(name || "").toLowerCase();
     if (n.endsWith(".pdf")) return "pdf";
     if (n.endsWith(".txt")) return "txt";
+    if (n.endsWith(".html")) return "html";
     if (mime === "application/pdf") return "pdf";
     if (mime === "text/plain") return "txt";
+    if (mime === "text/html") return "html";
     return "bin";
   }
 
   function readFileAsBase64(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(new Error("Failed to read file"));
-      reader.onload = () => {
-        const arr = reader.result; // ArrayBuffer
-        resolve(arrayBufferToBase64(arr));
-      };
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onerror = function () { reject(new Error("Failed to read file")); };
+      reader.onload = function () { resolve(arrayBufferToBase64(reader.result)); };
       reader.readAsArrayBuffer(file);
     });
   }
 
   function arrayBufferToBase64(arrayBuffer) {
-    const bytes = new Uint8Array(arrayBuffer);
-    let binary = "";
-    const chunkSize = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
+    var bytes = new Uint8Array(arrayBuffer);
+    var binary = "";
+    var chunkSize = 0x8000;
+    for (var i = 0; i < bytes.length; i += chunkSize) {
       binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
     }
     return btoa(binary);
   }
 
   function base64FromUtf8(text) {
-    // encodeURIComponent trick to get UTF-8 bytes into btoa safely
     return btoa(unescape(encodeURIComponent(String(text || ""))));
   }
 
   function downloadBase64(base64, filename, mime) {
-    const bytes = base64ToBytes(base64);
-    const blob = new Blob([bytes], { type: mime || "application/octet-stream" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
+    var byteChars = atob(base64);
+    var byteNumbers = new Array(byteChars.length);
+    for (var i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+    var bytes = new Uint8Array(byteNumbers);
+    var blob = new Blob([bytes], { type: mime || "application/octet-stream" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
     a.href = url;
     a.download = filename || "download";
     a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-  }
-
-  function base64ToBytes(base64) {
-    const byteChars = atob(base64);
-    const byteNumbers = new Array(byteChars.length);
-    for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
-    return new Uint8Array(byteNumbers);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
   }
 
   function escHtml(str) {
-    const div = document.createElement("div");
+    var div = document.createElement("div");
     div.textContent = str;
     return div.innerHTML;
   }
 
   function truncate(str, len) {
     if (!str) return "";
-    return str.length > len ? str.substring(0, len - 3) + "..." : str;
+    return str.length > len ? str.substring(0, len - 3) + "…" : str;
   }
 })();

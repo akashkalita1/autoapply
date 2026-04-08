@@ -75,9 +75,25 @@ window.JobAutofill = window.JobAutofill || {};
           filled.push({ field: label, value: String(value) });
           log("CHECK", label + " <- " + value);
         } else if (type === "file") {
-          // File uploads can't be programmatically set for security reasons
-          skipped.push({ field: label, reason: "file upload not supported in extension", confidence: confidence });
-          log("SKIP", label + " -- file upload not supported");
+          var fileData = m.__fileData;
+          if (fileData && fileData.dataBase64 && JA.base64ToBytes) {
+            try {
+              var bytes = JA.base64ToBytes(fileData.dataBase64);
+              var synthFile = new File([bytes], fileData.name || "resume.pdf", { type: fileData.mime || "application/pdf" });
+              var dt = new DataTransfer();
+              dt.items.add(synthFile);
+              element.files = dt.files;
+              element.dispatchEvent(new Event("change", { bubbles: true }));
+              filled.push({ field: label, value: fileData.name || "resume.pdf" });
+              log("FILE", label + " <- " + (fileData.name || "resume.pdf"));
+            } catch (fileErr) {
+              skipped.push({ field: label, reason: "file attach failed: " + fileErr, confidence: confidence });
+              log("ERROR", label + " -- file attach failed: " + fileErr);
+            }
+          } else {
+            skipped.push({ field: label, reason: "no resume file configured", confidence: confidence });
+            log("SKIP", label + " -- no resume file for upload");
+          }
         } else {
           // text, email, tel, url, textarea, number, etc.
           setValueAndDispatch(element, value);

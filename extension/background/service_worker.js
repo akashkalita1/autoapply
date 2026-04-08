@@ -673,6 +673,18 @@ async function handleMessage(msg, sender) {
     case "generateAiDocuments":
       return await handleGenerateAiDocuments(msg);
 
+    case "analyzeResumeGaps":
+      return await handleAnalyzeResumeGaps(msg);
+
+    case "executeResumeOptimization":
+      return await handleExecuteResumeOptimization(msg);
+
+    case "opportunityDetected":
+      return handleOpportunityDetected(msg, sender);
+
+    case "requestOptimize":
+      return handleRequestOptimize(sender);
+
     case "getStyleProfile":
       return { ok: true, styleProfile: await getStyleProfile() };
 
@@ -758,7 +770,35 @@ async function handleAutofill(msg) {
     }
   }
 
-  // 5. Send to content script
+  // 5. Attach resume file data to file-upload mappings
+  const RESUME_FILE_RE = /resume|cv|curriculum/i;
+  const baseResumePdf = await getBaseResumePdf();
+  if (baseResumePdf && baseResumePdf.dataBase64) {
+    for (let i = 0; i < mappings.length; i++) {
+      const m = mappings[i];
+      const field = fields.find((f) => f.selector === m.selector);
+      if (!field) continue;
+      const isFileField = field.type === "file";
+      const isFileUploadValue = m.value === "__FILE_UPLOAD__";
+      if (isFileField || isFileUploadValue) {
+        const context = [field.label, field.name, field.id, field.aria_label, field.nearby_text].join(" ");
+        if (RESUME_FILE_RE.test(context) || isFileUploadValue) {
+          mappings[i] = {
+            ...m,
+            value: "__FILE_UPLOAD__",
+            confidence: 1.0,
+            __fileData: {
+              dataBase64: baseResumePdf.dataBase64,
+              name: baseResumePdf.name || "resume.pdf",
+              mime: baseResumePdf.mime || "application/pdf",
+            },
+          };
+        }
+      }
+    }
+  }
+
+  // 6. Send to content script
   if (mode === "preview") {
     try {
       await chrome.tabs.sendMessage(tab.id, { action: "previewFill", mappings });
@@ -808,6 +848,140 @@ async function executeFillOnTab(tabId, mappings) {
     filled: result ? result.filled : [],
     skipped: result ? result.skipped : [],
     error: result ? result.error : "No response from content script",
+  };
+}
+
+// ---- Opportunity detection & badge -----------------------------------------
+
+function handleOpportunityDetected(msg, sender) {
+  const tabId = sender && sender.tab ? sender.tab.id : null;
+  if (!tabId) return { ok: true };
+
+  try {
+    chrome.action.setBadgeText({ text: "!", tabId });
+    chrome.action.setBadgeBackgroundColor({ color: "#6366f1", tabId });
+  } catch (e) {
+    // Badge API may not be available in all contexts
+  }
+
+  return { ok: true };
+}
+
+function handleRequestOptimize(sender) {
+  // Widget requested optimize — highlight badge so user opens popup
+  const tabId = sender && sender.tab ? sender.tab.id : null;
+  if (tabId) {
+    try {
+      chrome.action.setBadgeText({ text: "✨", tabId });
+      chrome.action.setBadgeBackgroundColor({ color: "#8b5cf6", tabId });
+    } catch (e) { /* ignore */ }
+  }
+  return { ok: true };
+}
+
+// ---- Two-phase resume optimization ----------------------------------------
+
+function flattenResumeText(resume) {
+  if (!resume) return "";
+  var parts = [];
+  if (resume.personal) {
+    parts.push(JSON.stringify(resume.personal));
+  }
+  var sections = ["experience", "projects", "education", "skills", "certifications"];
+  for (var i = 0; i < sections.length; i++) {
+    var sec = resume[sections[i]];
+    if (Array.isArray(sec)) {
+      parts.push(JSON.stringify(sec));
+    } else if (sec) {
+      parts.push(JSON.stringify(sec));
+    }
+  }
+  return parts.join(" ").toLowerCase();
+}
+
+async function handleAnalyzeResumeGaps(msg) {
+  const apiKey = await getApiKey();
+  if (!apiKey) return { ok: false, error: "No OpenAI API key configured. Set it in Options." };
+  const llmOn = await isLlmEnabled();
+  if (!llmOn) return { ok: false, error: "LLM is disabled. Enable it in Options." };
+  const resume = await getResume();
+  if (!resume) return { ok: false, error: "No resume JSON configured. Upload it in Options." };
+
+  const jdText = msg.jdText;
+  if (!jdText || jdText.trim().length < 30) {
+    return { ok: false, error: "Could not extract job description text from this page." };
+  }
+
+  let jdAnalysis;
+  try {
+    jdAnalysis = await analyzeJd(jdText, apiKey);
+  } catch (err) {
+    console.error("[JobAutofill BG] JD analysis failed:", err);
+    return { ok: false, error: "JD analysis failed: " + (err.message || String(err)) };
+  }
+
+  // Local gap check against resume text
+  const resumeText = flattenResumeText(resume);
+
+  const missingSkills = (jdAnalysis.hard_skills || []).filter(function (skill) {
+    return resumeText.indexOf(skill.toLowerCase()) === -1;
+  });
+
+  const missingQualifications = (jdAnalysis.required_qualifications || []).filter(function (qual) {
+    var words = qual.toLowerCase().split(/\s+/).filter(function (w) { return w.length > 3; });
+    var matchCount = 0;
+    for (var i = 0; i < words.length; i++) {
+      if (resumeText.indexOf(words[i]) !== -1) matchCount++;
+    }
+    return words.length === 0 || (matchCount / words.length) < 0.4;
+  });
+
+  const missingKeywords = (jdAnalysis.keywords || []).filter(function (kw) {
+    return resumeText.indexOf(kw.toLowerCase()) === -1;
+  });
+
+  return {
+    ok: true,
+    jdAnalysis: jdAnalysis,
+    missingSkills: missingSkills,
+    missingQualifications: missingQualifications,
+    missingKeywords: missingKeywords,
+  };
+}
+
+async function handleExecuteResumeOptimization(msg) {
+  const apiKey = await getApiKey();
+  if (!apiKey) return { ok: false, error: "No OpenAI API key configured." };
+  const resume = await getResume();
+  if (!resume) return { ok: false, error: "No resume JSON configured." };
+
+  const jdAnalysis = msg.jdAnalysis;
+  if (!jdAnalysis) return { ok: false, error: "Missing JD analysis from Phase 1." };
+
+  const styleProfile = await getStyleProfile();
+
+  let tailorResult, coverLetterText;
+  try {
+    [tailorResult, coverLetterText] = await Promise.all([
+      tailorResume(resume, jdAnalysis, apiKey),
+      generateCoverLetterText(resume, jdAnalysis, styleProfile, apiKey),
+    ]);
+  } catch (err) {
+    console.error("[JobAutofill BG] Resume optimization failed:", err);
+    return { ok: false, error: "Optimization failed: " + (err.message || String(err)) };
+  }
+
+  const tailoredResume = tailorResult.tailored_resume || tailorResult;
+  const requirementsGaps = tailorResult.requirements_gaps || [];
+  const diff = computeResumeDiff(resume, tailoredResume);
+
+  return {
+    ok: true,
+    tailoredResume: tailoredResume,
+    coverLetterText: coverLetterText,
+    jdAnalysis: jdAnalysis,
+    requirementsGaps: requirementsGaps,
+    diff: diff,
   };
 }
 

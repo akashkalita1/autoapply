@@ -38,6 +38,8 @@
         "content/site_adapters/workday.js",
         "content/site_adapters/adapter_registry.js",
         "content/dom_filler.js",
+        "content/notification_widget.js",
+        "content/opportunity_detector.js",
         "content/content_main.js"
       ],
       "run_at": "document_idle"

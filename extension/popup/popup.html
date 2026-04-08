@@ -10,63 +10,65 @@
   <div class="container">
     <!-- Header -->
     <header class="header">
-      <h1 class="title">Job Autofill</h1>
+      <h1 class="title">✦ Job Autofill</h1>
       <span id="statusBadge" class="badge badge-neutral">Ready</span>
     </header>
 
-    <!-- Profile summary -->
-    <section id="profileSection" class="section">
+    <!-- Profile -->
+    <section id="profileSection" class="card">
       <div class="profile-summary" id="profileSummary">
         <p class="placeholder-text">No profile configured.</p>
       </div>
-      <a href="#" id="openOptions" class="link-sm">Edit Profile &amp; Settings</a>
+      <a href="#" id="openOptions" class="link-sm">Edit profile &amp; settings</a>
     </section>
 
     <!-- Action buttons -->
-    <section class="section actions">
+    <section class="actions">
       <button id="btnPreview" class="btn btn-secondary" disabled>
-        <span class="btn-icon">&#128270;</span> Preview
+        🔍 Preview
       </button>
       <button id="btnFill" class="btn btn-primary" disabled>
-        <span class="btn-icon">&#9998;</span> Fill Fields
+        ✏️ Fill
       </button>
       <button id="btnAiOptimize" class="btn btn-ai" disabled title="Enable LLM in Options to use AI Optimize">
-        <span class="btn-icon">&#9889;</span> AI Optimize
+        ✨ Optimize
       </button>
     </section>
 
-    <!-- Job Documents -->
+    <!-- Documents (collapsible) -->
     <section id="docsSection" class="section">
-      <div class="section-header">
-        <h2 class="section-title">Documents (this job)</h2>
+      <div class="docs-toggle" id="docsToggle">
+        <h2 class="section-title">📄 Documents</h2>
+        <span class="docs-toggle-arrow" id="docsArrow">▶</span>
       </div>
-      <div id="jobContextLine" class="text-muted"></div>
+      <div id="jobContextLine" class="text-muted" style="margin-bottom:4px;"></div>
 
-      <div class="docs-actions">
-        <div class="docs-action">
-          <label class="link-sm" for="uploadEditedResume">Add edited resume (PDF)</label>
-          <input id="uploadEditedResume" type="file" accept="application/pdf">
+      <div class="docs-body" id="docsBody">
+        <div class="docs-actions">
+          <div class="docs-action">
+            <label class="link-sm" for="uploadEditedResume">Add resume (PDF)</label>
+            <input id="uploadEditedResume" type="file" accept="application/pdf">
+          </div>
+          <div class="docs-action">
+            <label class="link-sm" for="uploadCoverLetterFile">Add cover letter (PDF)</label>
+            <input id="uploadCoverLetterFile" type="file" accept="application/pdf">
+          </div>
         </div>
-        <div class="docs-action">
-          <label class="link-sm" for="uploadCoverLetterFile">Add cover letter (PDF)</label>
-          <input id="uploadCoverLetterFile" type="file" accept="application/pdf">
+
+        <div class="docs-compose">
+          <textarea id="coverLetterText" rows="4" placeholder="Paste cover letter text..."></textarea>
+          <button id="btnSaveCoverLetterText" class="btn btn-secondary btn-full">Save cover letter</button>
         </div>
-      </div>
 
-      <div class="docs-compose">
-        <div class="text-muted" style="margin-bottom:6px;">Or save a cover letter as text:</div>
-        <textarea id="coverLetterText" rows="5" placeholder="Paste cover letter text here..."></textarea>
-        <button id="btnSaveCoverLetterText" class="btn btn-secondary btn-full">Save cover letter (text)</button>
+        <div id="docsStatus" class="text-muted" style="margin-top:8px;"></div>
+        <div id="docsList" class="result-list" style="margin-top:8px;"></div>
       </div>
-
-      <div id="docsStatus" class="text-muted" style="margin-top:8px;"></div>
-      <div id="docsList" class="result-list" style="margin-top:8px;"></div>
     </section>
 
-    <!-- Preview results (hidden by default) -->
+    <!-- Preview results -->
     <section id="previewSection" class="section hidden">
       <div class="section-header">
-        <h2 class="section-title">Preview</h2>
+        <h2 class="section-title">📝 Preview</h2>
         <button id="btnClearPreview" class="btn-text">Clear</button>
       </div>
       <div id="previewStats" class="stats"></div>
@@ -76,22 +78,37 @@
       </button>
     </section>
 
-    <!-- Fill results (hidden by default) -->
+    <!-- Fill results -->
     <section id="resultsSection" class="section hidden">
-      <h2 class="section-title">Results</h2>
+      <h2 class="section-title">✅ Results</h2>
       <div id="resultStats" class="stats"></div>
       <div id="resultList" class="result-list"></div>
     </section>
 
-    <!-- AI Optimize results (hidden by default) -->
+    <!-- AI Preview (Phase 1) -->
+    <section id="aiPreviewSection" class="section hidden">
+      <div class="section-header">
+        <h2 class="section-title">🔍 Resume Analysis</h2>
+        <button id="btnCancelAiPreview" class="btn-text">Cancel</button>
+      </div>
+      <div id="aiPreviewStatus" class="ai-status"></div>
+      <div id="aiPreviewContent" class="ai-preview-card"></div>
+      <div class="ai-preview-actions">
+        <button id="btnConfirmOptimize" class="btn btn-ai btn-full" disabled>
+          ✨ Confirm &amp; Optimize
+        </button>
+      </div>
+    </section>
+
+    <!-- AI Optimize results (Phase 2) -->
     <section id="aiSection" class="section hidden">
       <div class="section-header">
-        <h2 class="section-title">AI Optimize</h2>
+        <h2 class="section-title">✨ AI Optimize</h2>
       </div>
       <div id="aiStatus" class="ai-status"></div>
 
       <div id="aiGapSection" class="hidden">
-        <h3 class="subsection-title">Requirements Gap Analysis</h3>
+        <h3 class="subsection-title">Requirements Gap</h3>
         <div id="aiGapList" class="gap-list"></div>
       </div>
 
@@ -101,7 +118,7 @@
       </div>
 
       <div id="aiCoverLetterSection" class="hidden">
-        <h3 class="subsection-title">Generated Cover Letter</h3>
+        <h3 class="subsection-title">Cover Letter</h3>
         <textarea id="aiCoverLetter" rows="8" readonly></textarea>
       </div>
     </section>

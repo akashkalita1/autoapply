@@ -49,6 +49,19 @@ window.JobAutofill = window.JobAutofill || {};
   };
 
   /**
+   * Decode a base64 string to a Uint8Array.
+   * Used by dom_filler.js and notification_widget.js for file attachment.
+   */
+  window.JobAutofill.base64ToBytes = function (base64) {
+    var byteChars = atob(base64);
+    var byteNumbers = new Array(byteChars.length);
+    for (var i = 0; i < byteChars.length; i++) {
+      byteNumbers[i] = byteChars.charCodeAt(i);
+    }
+    return new Uint8Array(byteNumbers);
+  };
+
+  /**
    * Detect navigation/submit buttons on the page.
    * Ported from autofill_agent.py detect_navigation_button (lines 300-330).
    */
