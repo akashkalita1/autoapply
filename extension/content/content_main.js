@@ -12,6 +12,92 @@ window.JobAutofill = window.JobAutofill || {};
   // Current state
   var currentMappings = null;
 
+  function normalizeKeyPart(str) {
+    return String(str || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .replace(/[^a-z0-9 _-]/g, "")
+      .replace(/\s/g, "-")
+      .slice(0, 80);
+  }
+
+  // Small deterministic hash (avoid async crypto for speed)
+  function hashString(str) {
+    var s = String(str || "");
+    var hash = 5381;
+    for (var i = 0; i < s.length; i++) {
+      hash = ((hash << 5) + hash) ^ s.charCodeAt(i);
+      hash = hash >>> 0;
+    }
+    return hash.toString(16);
+  }
+
+  function firstText(selectors) {
+    for (var i = 0; i < selectors.length; i++) {
+      var el = document.querySelector(selectors[i]);
+      if (!el) continue;
+      var t = (el.innerText || el.textContent || "").trim();
+      if (t) return t;
+    }
+    return "";
+  }
+
+  function extractJobMeta() {
+    var url = window.location.href;
+    var title = firstText(["h1", '[data-automation-id="jobPostingHeader"]']) || document.title || "";
+
+    // Best-effort company extraction
+    var ogSite = document.querySelector('meta[property="og:site_name"]');
+    var ogTitle = document.querySelector('meta[property="og:title"]');
+    var company = (ogSite && ogSite.content) ? ogSite.content.trim() : "";
+    if (!company && ogTitle && ogTitle.content) {
+      // Often "Role at Company"
+      var parts = ogTitle.content.split(" at ");
+      if (parts.length === 2) company = parts[1].trim();
+    }
+    if (!company && title) {
+      // Often "Company - Role" or "Role | Company"
+      var m = title.split(" | ");
+      if (m.length >= 2) company = m[m.length - 1].trim();
+      if (!company) {
+        var m2 = title.split(" - ");
+        if (m2.length >= 2) company = m2[0].trim();
+      }
+    }
+
+    // Best-effort location extraction
+    var location =
+      firstText([
+        '[class*="location" i]',
+        '[data-automation-id*="location" i]',
+        '[data-testid*="location" i]',
+      ]) || "";
+    if (location && location.length > 120) location = location.slice(0, 120);
+
+    return {
+      url: url,
+      hostname: window.location.hostname,
+      title: title,
+      company: company,
+      location: location,
+      capturedAt: new Date().toISOString(),
+    };
+  }
+
+  function buildJobKey(jobMeta) {
+    var company = normalizeKeyPart(jobMeta && jobMeta.company);
+    var title = normalizeKeyPart(jobMeta && jobMeta.title);
+    var location = normalizeKeyPart(jobMeta && jobMeta.location);
+    var urlHash = hashString(jobMeta && jobMeta.url);
+
+    var parts = [company, title, location].filter(Boolean);
+    if (parts.length === 0) {
+      parts = [normalizeKeyPart(window.location.hostname)];
+    }
+    return parts.join("|") + "|" + urlHash;
+  }
+
   /**
    * Handle messages from the background service worker / popup.
    */
@@ -40,6 +126,15 @@ window.JobAutofill = window.JobAutofill || {};
         sendResponse({ ok: true, url: window.location.href });
         return false;
 
+      case "getJobContext":
+        try {
+          var meta = extractJobMeta();
+          sendResponse({ ok: true, jobMeta: meta, jobKey: buildJobKey(meta) });
+        } catch (e) {
+          sendResponse({ ok: false, error: String(e) });
+        }
+        return false;
+
       default:
         sendResponse({ error: "unknown action: " + msg.action });
         return false;
@@ -65,6 +160,8 @@ window.JobAutofill = window.JobAutofill || {};
 
       // Detect navigation buttons
       var navButton = JA.detectNavigationButton();
+      var jobMeta = extractJobMeta();
+      var jobKey = buildJobKey(jobMeta);
 
       JA.log("INFO", "Scanned " + fields.length + " fields on " + window.location.href);
 
@@ -74,6 +171,8 @@ window.JobAutofill = window.JobAutofill || {};
         navButton: navButton,
         url: window.location.href,
         adapterName: adapter ? adapter.name : "generic",
+        jobMeta: jobMeta,
+        jobKey: jobKey,
       });
     } catch (err) {
       JA.log("ERROR", "Scan failed: " + err);

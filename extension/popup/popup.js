@@ -21,7 +21,18 @@
   const adapterNameEl = document.getElementById("adapterName");
   const llmStatusEl = document.getElementById("llmStatus");
 
+  // Documents UI
+  const jobContextLine = document.getElementById("jobContextLine");
+  const docsStatus = document.getElementById("docsStatus");
+  const docsList = document.getElementById("docsList");
+  const uploadEditedResume = document.getElementById("uploadEditedResume");
+  const uploadCoverLetterFile = document.getElementById("uploadCoverLetterFile");
+  const coverLetterText = document.getElementById("coverLetterText");
+  const btnSaveCoverLetterText = document.getElementById("btnSaveCoverLetterText");
+
   let currentMappings = null;
+  let currentJobKey = null;
+  let currentJobMeta = null;
 
   // ---- Init ----
 
@@ -63,6 +74,9 @@
       btnPreview.disabled = true;
       btnFill.disabled = true;
     }
+
+    // Load job context + docs list (best-effort)
+    await refreshJobContextAndDocs();
   }
 
   // ---- Event Listeners ----
@@ -86,6 +100,12 @@
       if (result.adapterName) {
         adapterNameEl.textContent = "Adapter: " + result.adapterName;
       }
+      if (result.jobKey) {
+        currentJobKey = result.jobKey;
+        currentJobMeta = result.jobMeta || currentJobMeta;
+        renderJobContextLine();
+        await refreshDocsList();
+      }
     } else {
       setStatus("Error", "error");
       showError(result.error);
@@ -105,6 +125,12 @@
     if (result.ok) {
       renderResults(result);
       setStatus("Filled", "success");
+      if (result.jobKey) {
+        currentJobKey = result.jobKey;
+        currentJobMeta = result.jobMeta || currentJobMeta;
+        renderJobContextLine();
+        await refreshDocsList();
+      }
     } else {
       setStatus("Error", "error");
       showError(result.error);
@@ -136,6 +162,12 @@
       renderResults(result);
       setStatus("Filled", "success");
       currentMappings = null;
+      if (result.jobKey) {
+        currentJobKey = result.jobKey;
+        currentJobMeta = result.jobMeta || currentJobMeta;
+        renderJobContextLine();
+        await refreshDocsList();
+      }
     } else {
       setStatus("Error", "error");
       showError(result.error);
@@ -143,6 +175,89 @@
 
     btnConfirmFill.disabled = false;
   });
+
+  // Documents: uploads & save text
+  if (uploadEditedResume) {
+    uploadEditedResume.addEventListener("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      uploadEditedResume.value = "";
+      if (!file) return;
+      await saveDocFromFile("editedResume", file);
+    });
+  }
+
+  if (uploadCoverLetterFile) {
+    uploadCoverLetterFile.addEventListener("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      uploadCoverLetterFile.value = "";
+      if (!file) return;
+      await saveDocFromFile("coverLetter", file);
+    });
+  }
+
+  if (btnSaveCoverLetterText) {
+    btnSaveCoverLetterText.addEventListener("click", async () => {
+      const text = (coverLetterText && coverLetterText.value) ? coverLetterText.value.trim() : "";
+      if (!text) {
+        setDocsStatus("Paste cover letter text first.", false);
+        return;
+      }
+      if (!currentJobKey) {
+        setDocsStatus("No job detected for this tab yet.", false);
+        return;
+      }
+      const doc = {
+        id: (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : ("doc_" + Date.now()),
+        name: "cover-letter.txt",
+        mime: "text/plain",
+        size: text.length,
+        createdAt: new Date().toISOString(),
+        dataBase64: base64FromUtf8(text),
+      };
+      const resp = await sendBg({
+        action: "saveJobDocument",
+        jobKey: currentJobKey,
+        jobMeta: currentJobMeta,
+        docType: "coverLetter",
+        doc,
+      });
+      if (resp.ok) {
+        coverLetterText.value = "";
+        setDocsStatus("Cover letter saved.", true);
+        await refreshDocsList();
+      } else {
+        setDocsStatus(resp.error || "Save failed.", false);
+      }
+    });
+  }
+
+  if (docsList) {
+    docsList.addEventListener("click", async (e) => {
+      const btn = e.target && e.target.closest ? e.target.closest("button[data-action]") : null;
+      if (!btn) return;
+      const action = btn.getAttribute("data-action");
+      const docType = btn.getAttribute("data-doc-type");
+      const id = btn.getAttribute("data-id");
+      if (!action || !docType || !id) return;
+
+      if (action === "download") {
+        await downloadJobDoc(docType, id);
+      } else if (action === "delete") {
+        const resp = await sendBg({
+          action: "deleteJobDocument",
+          jobKey: currentJobKey,
+          docType: docType,
+          id: id,
+        });
+        if (resp.ok) {
+          setDocsStatus("Deleted.", true);
+          await refreshDocsList();
+        } else {
+          setDocsStatus(resp.error || "Delete failed.", false);
+        }
+      }
+    });
+  }
 
   // ---- Render helpers ----
 
@@ -243,6 +358,261 @@
 
   function openOptionsPage() {
     chrome.runtime.openOptionsPage();
+  }
+
+  async function refreshJobContextAndDocs() {
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab || !tab.id) return;
+      const resp = await chrome.tabs.sendMessage(tab.id, { action: "getJobContext" });
+      if (resp && resp.ok && resp.jobKey) {
+        currentJobKey = resp.jobKey;
+        currentJobMeta = resp.jobMeta || null;
+        renderJobContextLine();
+        await refreshDocsList();
+      } else {
+        currentJobKey = null;
+        currentJobMeta = null;
+        renderJobContextLine();
+        renderDocsList(null);
+      }
+    } catch (e) {
+      // Content script not reachable
+      currentJobKey = null;
+      currentJobMeta = null;
+      renderJobContextLine();
+      renderDocsList(null);
+    }
+  }
+
+  function renderJobContextLine() {
+    if (!jobContextLine) return;
+    if (!currentJobKey) {
+      jobContextLine.textContent = "No job detected on this tab yet.";
+      if (uploadEditedResume) uploadEditedResume.disabled = true;
+      if (uploadCoverLetterFile) uploadCoverLetterFile.disabled = true;
+      if (btnSaveCoverLetterText) btnSaveCoverLetterText.disabled = true;
+      return;
+    }
+    const company = (currentJobMeta && currentJobMeta.company) ? currentJobMeta.company : "";
+    const title = (currentJobMeta && currentJobMeta.title) ? currentJobMeta.title : "";
+    const parts = [company, title].filter(Boolean);
+    jobContextLine.textContent = parts.length ? parts.join(" — ") : "Job key: " + currentJobKey;
+    if (uploadEditedResume) uploadEditedResume.disabled = false;
+    if (uploadCoverLetterFile) uploadCoverLetterFile.disabled = false;
+    if (btnSaveCoverLetterText) btnSaveCoverLetterText.disabled = false;
+  }
+
+  function setDocsStatus(text, ok) {
+    if (!docsStatus) return;
+    docsStatus.textContent = text || "";
+    docsStatus.style.color = ok ? "#065f46" : "#991b1b";
+  }
+
+  async function refreshDocsList() {
+    if (!currentJobKey) {
+      renderDocsList(null);
+      return;
+    }
+    const resp = await sendBg({ action: "getJobDocuments", jobKey: currentJobKey });
+    if (!resp.ok) {
+      setDocsStatus(resp.error || "Failed to load documents.", false);
+      renderDocsList(null);
+      return;
+    }
+    setDocsStatus("", true);
+    renderDocsList(resp.bucket);
+  }
+
+  function renderDocsList(bucket) {
+    if (!docsList) return;
+    if (!currentJobKey) {
+      docsList.innerHTML = '<div class="result-item"><span class="result-value skipped">Open a job application tab to save documents.</span></div>';
+      return;
+    }
+    if (!bucket) {
+      docsList.innerHTML = '<div class="result-item"><span class="result-value skipped">No documents saved for this job yet.</span></div>';
+      return;
+    }
+
+    const edited = Array.isArray(bucket.editedResumes) ? bucket.editedResumes : [];
+    const covers = Array.isArray(bucket.coverLetters) ? bucket.coverLetters : [];
+
+    let html = "";
+    html += '<div class="result-item"><span class="result-field">Edited resumes</span><span class="result-value">' + edited.length + "</span></div>";
+    for (const d of edited) {
+      html += renderDocRow("editedResume", d);
+    }
+    html += '<div class="result-item"><span class="result-field">Cover letters</span><span class="result-value">' + covers.length + "</span></div>";
+    for (const d2 of covers) {
+      html += renderDocRow("coverLetter", d2);
+    }
+    docsList.innerHTML = html;
+  }
+
+  function renderDocRow(docType, d) {
+    const label = d && d.name ? d.name : "(unnamed)";
+    const createdAt = d && d.createdAt ? new Date(d.createdAt).toLocaleString() : "";
+    const right = createdAt ? createdAt : "";
+    const id = d && d.id ? d.id : "";
+    return (
+      '<div class="result-item">' +
+      '<span class="result-field" title="' + escHtml(label) + '">' + escHtml(truncate(label, 22)) + "</span>" +
+      '<span class="result-value" style="display:flex;gap:6px;align-items:center;justify-content:flex-end;">' +
+      '<span class="text-muted" style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + escHtml(right) + "</span>" +
+      '<button class="btn-text" data-action="download" data-doc-type="' + docType + '" data-id="' + escHtml(id) + '">Download</button>' +
+      '<button class="btn-text" data-action="delete" data-doc-type="' + docType + '" data-id="' + escHtml(id) + '">Delete</button>' +
+      "</span>" +
+      "</div>"
+    );
+  }
+
+  async function saveDocFromFile(docType, file) {
+    if (!currentJobKey) {
+      setDocsStatus("No job detected for this tab yet.", false);
+      return;
+    }
+    if (!file) return;
+
+    if (docType === "editedResume" && file.type !== "application/pdf") {
+      setDocsStatus("Edited resume must be a PDF.", false);
+      return;
+    }
+    if (docType === "coverLetter" && file.type !== "application/pdf") {
+      setDocsStatus("Cover letter file must be a PDF.", false);
+      return;
+    }
+
+    try {
+      setDocsStatus("Saving...", true);
+      const dataBase64 = await readFileAsBase64(file);
+      const doc = {
+        id: (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : ("doc_" + Date.now()),
+        name: file.name || (docType === "editedResume" ? "edited-resume.pdf" : "cover-letter.pdf"),
+        mime: file.type || "application/pdf",
+        size: file.size || 0,
+        createdAt: new Date().toISOString(),
+        dataBase64,
+      };
+
+      const resp = await sendBg({
+        action: "saveJobDocument",
+        jobKey: currentJobKey,
+        jobMeta: currentJobMeta,
+        docType: docType,
+        doc,
+      });
+      if (resp.ok) {
+        setDocsStatus("Saved.", true);
+        await refreshDocsList();
+      } else {
+        setDocsStatus(resp.error || "Save failed.", false);
+      }
+    } catch (e) {
+      setDocsStatus("Save failed: " + String(e), false);
+    }
+  }
+
+  async function downloadJobDoc(docType, id) {
+    if (!currentJobKey) return;
+    const resp = await sendBg({ action: "getJobDocuments", jobKey: currentJobKey });
+    if (!resp.ok || !resp.bucket) {
+      setDocsStatus(resp.error || "Failed to load documents.", false);
+      return;
+    }
+    const bucket = resp.bucket;
+    const arr = docType === "editedResume" ? (bucket.editedResumes || []) : (bucket.coverLetters || []);
+    const doc = arr.find((d) => d && d.id === id);
+    if (!doc || !doc.dataBase64) {
+      setDocsStatus("Document not found.", false);
+      return;
+    }
+    const filename = buildJobFilename(currentJobMeta, docType, doc);
+    downloadBase64(doc.dataBase64, filename, doc.mime || "application/octet-stream");
+    setDocsStatus("Download started.", true);
+  }
+
+  function buildJobFilename(jobMeta, docType, doc) {
+    const company = safeFilePart(jobMeta && jobMeta.company);
+    const title = safeFilePart(jobMeta && jobMeta.title);
+    const date = isoDatePart(doc && doc.createdAt);
+    const kind = docType === "editedResume" ? "edited-resume" : "cover-letter";
+    const ext = inferExt(doc && doc.name, doc && doc.mime);
+    const parts = [company, title, date, kind].filter(Boolean);
+    const base = parts.length ? parts.join("-") : ("job-" + (date || "document") + "-" + kind);
+    return base + "." + ext;
+  }
+
+  function safeFilePart(s) {
+    return String(s || "")
+      .trim()
+      .replace(/[\/\\?%*:|"<>]/g, "")
+      .replace(/\s+/g, "-")
+      .slice(0, 40);
+  }
+
+  function isoDatePart(iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return "" + yyyy + mm + dd;
+  }
+
+  function inferExt(name, mime) {
+    const n = String(name || "").toLowerCase();
+    if (n.endsWith(".pdf")) return "pdf";
+    if (n.endsWith(".txt")) return "txt";
+    if (mime === "application/pdf") return "pdf";
+    if (mime === "text/plain") return "txt";
+    return "bin";
+  }
+
+  function readFileAsBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("Failed to read file"));
+      reader.onload = () => {
+        const arr = reader.result; // ArrayBuffer
+        resolve(arrayBufferToBase64(arr));
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  function arrayBufferToBase64(arrayBuffer) {
+    const bytes = new Uint8Array(arrayBuffer);
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+    }
+    return btoa(binary);
+  }
+
+  function base64FromUtf8(text) {
+    // encodeURIComponent trick to get UTF-8 bytes into btoa safely
+    return btoa(unescape(encodeURIComponent(String(text || ""))));
+  }
+
+  function downloadBase64(base64, filename, mime) {
+    const bytes = base64ToBytes(base64);
+    const blob = new Blob([bytes], { type: mime || "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename || "download";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  function base64ToBytes(base64) {
+    const byteChars = atob(base64);
+    const byteNumbers = new Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+    return new Uint8Array(byteNumbers);
   }
 
   function escHtml(str) {

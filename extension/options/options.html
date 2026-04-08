@@ -183,6 +183,25 @@
       <button id="btnSaveResume" class="btn btn-secondary">Save Resume Data</button>
       <div id="resumeStatus" class="status-msg hidden"></div>
     </section>
+
+    <!-- Base Resume PDF -->
+    <section class="card">
+      <h2>Base Resume PDF</h2>
+      <p class="help-text">
+        Upload the resume PDF you want to use as your “base” resume. The extension will store it locally and
+        use it as the source for job-specific edited resumes.
+      </p>
+      <div class="form-group">
+        <label for="baseResumePdf">Upload PDF</label>
+        <input type="file" id="baseResumePdf" accept="application/pdf">
+      </div>
+      <div id="baseResumePdfMeta" class="help-text"></div>
+      <div class="form-actions">
+        <button type="button" id="btnDownloadBaseResumePdf" class="btn btn-secondary">Download stored PDF</button>
+        <button type="button" id="btnClearBaseResumePdf" class="btn btn-secondary">Clear stored PDF</button>
+      </div>
+      <div id="baseResumePdfStatus" class="status-msg hidden"></div>
+    </section>
   </div>
 
   <script src="options.js"></script>

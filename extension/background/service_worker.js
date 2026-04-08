@@ -11,10 +11,16 @@ importScripts("../shared/match_rules.js");
 const STORAGE_KEYS = {
   PROFILE: "jaf_profile",
   RESUME: "jaf_resume",
+  BASE_RESUME_PDF: "jaf_base_resume_pdf",
+  JOB_DOCUMENTS: "jaf_job_documents",
   API_KEY: "jaf_openai_key",
   LLM_ENABLED: "jaf_llm_enabled",
   LAST_FILL_LOG: "jaf_last_fill_log",
 };
+
+// Storage sizing/retention (chrome.storage.local is quota-limited; keep it bounded)
+const MAX_DOCS_PER_JOB_PER_TYPE = 5;
+const MAX_TOTAL_BYTES_SOFT = 8 * 1024 * 1024; // soft cap; we’ll trim before exceeding
 
 async function getProfile() {
   const result = await chrome.storage.local.get(STORAGE_KEYS.PROFILE);
@@ -24,6 +30,102 @@ async function getProfile() {
 async function getResume() {
   const result = await chrome.storage.local.get(STORAGE_KEYS.RESUME);
   return result[STORAGE_KEYS.RESUME] || null;
+}
+
+async function getBaseResumePdf() {
+  const result = await chrome.storage.local.get(STORAGE_KEYS.BASE_RESUME_PDF);
+  return result[STORAGE_KEYS.BASE_RESUME_PDF] || null;
+}
+
+async function saveBaseResumePdf(pdf) {
+  await chrome.storage.local.set({ [STORAGE_KEYS.BASE_RESUME_PDF]: pdf });
+}
+
+async function getAllJobDocuments() {
+  const result = await chrome.storage.local.get(STORAGE_KEYS.JOB_DOCUMENTS);
+  return result[STORAGE_KEYS.JOB_DOCUMENTS] || {};
+}
+
+async function saveAllJobDocuments(allDocs) {
+  await chrome.storage.local.set({ [STORAGE_KEYS.JOB_DOCUMENTS]: allDocs });
+}
+
+function ensureJobBucket(allDocs, jobKey, jobMeta) {
+  if (!allDocs[jobKey]) {
+    allDocs[jobKey] = {
+      jobKey,
+      jobMeta: jobMeta || null,
+      editedResumes: [],
+      coverLetters: [],
+      updatedAt: new Date().toISOString(),
+    };
+  } else {
+    if (jobMeta) allDocs[jobKey].jobMeta = jobMeta;
+    allDocs[jobKey].updatedAt = new Date().toISOString();
+    allDocs[jobKey].editedResumes = Array.isArray(allDocs[jobKey].editedResumes)
+      ? allDocs[jobKey].editedResumes
+      : [];
+    allDocs[jobKey].coverLetters = Array.isArray(allDocs[jobKey].coverLetters)
+      ? allDocs[jobKey].coverLetters
+      : [];
+  }
+  return allDocs[jobKey];
+}
+
+function sortNewestFirst(a, b) {
+  return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+}
+
+function trimDocsInPlace(bucket) {
+  bucket.editedResumes.sort(sortNewestFirst);
+  bucket.coverLetters.sort(sortNewestFirst);
+  bucket.editedResumes = bucket.editedResumes.slice(0, MAX_DOCS_PER_JOB_PER_TYPE);
+  bucket.coverLetters = bucket.coverLetters.slice(0, MAX_DOCS_PER_JOB_PER_TYPE);
+}
+
+async function getBytesInUseSafe(keys) {
+  try {
+    return await chrome.storage.local.getBytesInUse(keys);
+  } catch (e) {
+    // Some environments may not support getBytesInUse; fall back gracefully.
+    return 0;
+  }
+}
+
+async function enforceStorageSoftCap(allDocs) {
+  // If we’re over the soft cap, trim oldest docs across jobs until under cap.
+  let bytes = await getBytesInUseSafe([STORAGE_KEYS.JOB_DOCUMENTS, STORAGE_KEYS.BASE_RESUME_PDF]);
+  if (!bytes || bytes <= MAX_TOTAL_BYTES_SOFT) return { ok: true, bytes };
+
+  // Build a global list of removable items (oldest first)
+  const removables = [];
+  for (const [jobKey, bucket] of Object.entries(allDocs || {})) {
+    const er = Array.isArray(bucket.editedResumes) ? bucket.editedResumes : [];
+    const cl = Array.isArray(bucket.coverLetters) ? bucket.coverLetters : [];
+    for (const d of er) removables.push({ jobKey, type: "editedResumes", createdAt: d.createdAt || "", id: d.id });
+    for (const d of cl) removables.push({ jobKey, type: "coverLetters", createdAt: d.createdAt || "", id: d.id });
+  }
+  removables.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))); // oldest first
+
+  let removed = 0;
+  while (bytes > MAX_TOTAL_BYTES_SOFT && removables.length > 0) {
+    const r = removables.shift();
+    const bucket = allDocs[r.jobKey];
+    if (!bucket || !Array.isArray(bucket[r.type])) continue;
+    const before = bucket[r.type].length;
+    bucket[r.type] = bucket[r.type].filter((d) => d && d.id !== r.id);
+    if (bucket[r.type].length !== before) {
+      removed += 1;
+      await saveAllJobDocuments(allDocs);
+      bytes = await getBytesInUseSafe([STORAGE_KEYS.JOB_DOCUMENTS, STORAGE_KEYS.BASE_RESUME_PDF]);
+      if (!bytes) break;
+    }
+  }
+
+  if (bytes && bytes > MAX_TOTAL_BYTES_SOFT) {
+    return { ok: false, error: "Storage is full; please delete old documents in the popup/options." };
+  }
+  return { ok: true, bytes, removed };
 }
 
 async function getApiKey() {
@@ -138,10 +240,20 @@ async function handleMessage(msg, sender) {
       return { ok: true };
 
     case "getSettings":
+      const basePdf = await getBaseResumePdf();
       return {
         ok: true,
         profile: await getProfile(),
         resume: await getResume(),
+        baseResumePdfMeta: basePdf
+          ? {
+              id: basePdf.id,
+              name: basePdf.name,
+              mime: basePdf.mime,
+              size: basePdf.size,
+              createdAt: basePdf.createdAt,
+            }
+          : null,
         apiKey: await getApiKey(),
         llmEnabled: await isLlmEnabled(),
       };
@@ -151,6 +263,67 @@ async function handleMessage(msg, sender) {
         await chrome.storage.local.set({ [STORAGE_KEYS.API_KEY]: msg.apiKey });
       if (msg.llmEnabled !== undefined)
         await chrome.storage.local.set({ [STORAGE_KEYS.LLM_ENABLED]: msg.llmEnabled });
+      return { ok: true };
+
+    case "saveBaseResumePdf":
+      if (!msg.pdf || !msg.pdf.dataBase64) return { ok: false, error: "Missing PDF data" };
+      await saveBaseResumePdf(msg.pdf);
+      return { ok: true };
+
+    case "getBaseResumePdf":
+      return { ok: true, pdf: await getBaseResumePdf() };
+
+    case "clearBaseResumePdf":
+      await chrome.storage.local.remove(STORAGE_KEYS.BASE_RESUME_PDF);
+      return { ok: true };
+
+    case "getJobDocuments":
+      if (!msg.jobKey) return { ok: false, error: "Missing jobKey" };
+      const allDocs1 = await getAllJobDocuments();
+      return { ok: true, bucket: allDocs1[msg.jobKey] || null };
+
+    case "listAllJobs":
+      const allDocs2 = await getAllJobDocuments();
+      return {
+        ok: true,
+        jobs: Object.values(allDocs2).map((b) => ({
+          jobKey: b.jobKey,
+          jobMeta: b.jobMeta || null,
+          updatedAt: b.updatedAt,
+          editedResumeCount: (b.editedResumes || []).length,
+          coverLetterCount: (b.coverLetters || []).length,
+        })),
+      };
+
+    case "saveJobDocument":
+      if (!msg.jobKey) return { ok: false, error: "Missing jobKey" };
+      if (!msg.docType || (msg.docType !== "editedResume" && msg.docType !== "coverLetter")) {
+        return { ok: false, error: "Invalid docType" };
+      }
+      if (!msg.doc || !msg.doc.dataBase64) return { ok: false, error: "Missing document data" };
+      const allDocs3 = await getAllJobDocuments();
+      const bucket = ensureJobBucket(allDocs3, msg.jobKey, msg.jobMeta);
+      if (msg.docType === "editedResume") bucket.editedResumes.unshift(msg.doc);
+      if (msg.docType === "coverLetter") bucket.coverLetters.unshift(msg.doc);
+      trimDocsInPlace(bucket);
+      await saveAllJobDocuments(allDocs3);
+      const cap = await enforceStorageSoftCap(allDocs3);
+      if (!cap.ok) return { ok: false, error: cap.error };
+      return { ok: true, bytesInUse: cap.bytes || null };
+
+    case "deleteJobDocument":
+      if (!msg.jobKey) return { ok: false, error: "Missing jobKey" };
+      if (!msg.docType || (msg.docType !== "editedResume" && msg.docType !== "coverLetter")) {
+        return { ok: false, error: "Invalid docType" };
+      }
+      if (!msg.id) return { ok: false, error: "Missing id" };
+      const allDocs4 = await getAllJobDocuments();
+      const bucket2 = allDocs4[msg.jobKey];
+      if (!bucket2) return { ok: true };
+      const key = msg.docType === "editedResume" ? "editedResumes" : "coverLetters";
+      bucket2[key] = (bucket2[key] || []).filter((d) => d && d.id !== msg.id);
+      bucket2.updatedAt = new Date().toISOString();
+      await saveAllJobDocuments(allDocs4);
       return { ok: true };
 
     case "getLastLog":
@@ -207,6 +380,9 @@ async function handleAutofill(msg) {
     return { ok: false, error: "No form fields found on this page." };
   }
 
+  const jobKey = scanResult.jobKey || "";
+  const jobMeta = scanResult.jobMeta || null;
+
   // 3. Rule-based matching (shared module loaded via importScripts)
   let mappings = MatchRules.ruleBasedMatch(fields, profile);
 
@@ -252,11 +428,14 @@ async function handleAutofill(msg) {
       navButton: scanResult.navButton,
       adapterName: scanResult.adapterName,
       fieldCount: fields.length,
+      jobKey,
+      jobMeta,
     };
   }
 
   // Direct fill (skip preview)
-  return await executeFillOnTab(tab.id, mappings);
+  const filled = await executeFillOnTab(tab.id, mappings);
+  return { ...filled, jobKey, jobMeta };
 }
 
 async function handleConfirmFill(msg) {

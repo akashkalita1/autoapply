@@ -32,6 +32,34 @@
       </button>
     </section>
 
+    <!-- Job Documents -->
+    <section id="docsSection" class="section">
+      <div class="section-header">
+        <h2 class="section-title">Documents (this job)</h2>
+      </div>
+      <div id="jobContextLine" class="text-muted"></div>
+
+      <div class="docs-actions">
+        <div class="docs-action">
+          <label class="link-sm" for="uploadEditedResume">Add edited resume (PDF)</label>
+          <input id="uploadEditedResume" type="file" accept="application/pdf">
+        </div>
+        <div class="docs-action">
+          <label class="link-sm" for="uploadCoverLetterFile">Add cover letter (PDF)</label>
+          <input id="uploadCoverLetterFile" type="file" accept="application/pdf">
+        </div>
+      </div>
+
+      <div class="docs-compose">
+        <div class="text-muted" style="margin-bottom:6px;">Or save a cover letter as text:</div>
+        <textarea id="coverLetterText" rows="5" placeholder="Paste cover letter text here..."></textarea>
+        <button id="btnSaveCoverLetterText" class="btn btn-secondary btn-full">Save cover letter (text)</button>
+      </div>
+
+      <div id="docsStatus" class="text-muted" style="margin-top:8px;"></div>
+      <div id="docsList" class="result-list" style="margin-top:8px;"></div>
+    </section>
+
     <!-- Preview results (hidden by default) -->
     <section id="previewSection" class="section hidden">
       <div class="section-header">

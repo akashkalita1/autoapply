@@ -28,6 +28,8 @@
     if (resp.resume) {
       document.getElementById("resumeJson").value = JSON.stringify(resp.resume, null, 2);
     }
+
+    renderBaseResumePdfMeta(resp.baseResumePdfMeta || null);
   }
 
   function populateForm(profile) {
@@ -137,6 +139,74 @@
     }
   });
 
+  // ---- Base Resume PDF ----
+
+  const baseResumePdfInput = document.getElementById("baseResumePdf");
+  const btnDownloadBase = document.getElementById("btnDownloadBaseResumePdf");
+  const btnClearBase = document.getElementById("btnClearBaseResumePdf");
+
+  if (baseResumePdfInput) {
+    baseResumePdfInput.addEventListener("change", async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      if (file.type !== "application/pdf") {
+        showStatus("baseResumePdfStatus", "Please choose a PDF file.", false);
+        baseResumePdfInput.value = "";
+        return;
+      }
+
+      try {
+        const dataBase64 = await readFileAsBase64(file);
+        const pdf = {
+          id: (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : ("pdf_" + Date.now()),
+          name: file.name || "resume.pdf",
+          mime: file.type || "application/pdf",
+          size: file.size || 0,
+          createdAt: new Date().toISOString(),
+          dataBase64: dataBase64,
+        };
+
+        const resp = await sendBg({ action: "saveBaseResumePdf", pdf });
+        if (resp.ok) {
+          showStatus("baseResumePdfStatus", "Base resume PDF saved.", true);
+          renderBaseResumePdfMeta({
+            id: pdf.id,
+            name: pdf.name,
+            mime: pdf.mime,
+            size: pdf.size,
+            createdAt: pdf.createdAt,
+          });
+        } else {
+          showStatus("baseResumePdfStatus", resp.error || "Save failed.", false);
+        }
+      } catch (err) {
+        showStatus("baseResumePdfStatus", "Upload failed: " + err.message, false);
+      } finally {
+        baseResumePdfInput.value = "";
+      }
+    });
+  }
+
+  if (btnDownloadBase) {
+    btnDownloadBase.addEventListener("click", async () => {
+      const resp = await sendBg({ action: "getBaseResumePdf" });
+      if (!resp.ok || !resp.pdf || !resp.pdf.dataBase64) {
+        showStatus("baseResumePdfStatus", "No stored base resume PDF.", false);
+        return;
+      }
+      downloadBase64File(resp.pdf.dataBase64, resp.pdf.name || "base-resume.pdf", resp.pdf.mime || "application/pdf");
+      showStatus("baseResumePdfStatus", "Download started.", true);
+    });
+  }
+
+  if (btnClearBase) {
+    btnClearBase.addEventListener("click", async () => {
+      const resp = await sendBg({ action: "clearBaseResumePdf" });
+      showStatus("baseResumePdfStatus", resp.ok ? "Cleared stored PDF." : "Clear failed.", !!resp.ok);
+      renderBaseResumePdfMeta(null);
+    });
+  }
+
   // ---- Helpers ----
 
   function sendBg(msg) {
@@ -153,5 +223,73 @@
     el.className = "status-msg " + (success ? "success" : "error");
     el.classList.remove("hidden");
     setTimeout(() => el.classList.add("hidden"), 4000);
+  }
+
+  function renderBaseResumePdfMeta(meta) {
+    const el = document.getElementById("baseResumePdfMeta");
+    const btnDownload = document.getElementById("btnDownloadBaseResumePdf");
+    const btnClear = document.getElementById("btnClearBaseResumePdf");
+    if (!el) return;
+
+    if (!meta) {
+      el.textContent = "No base resume PDF stored yet.";
+      if (btnDownload) btnDownload.disabled = true;
+      if (btnClear) btnClear.disabled = true;
+      return;
+    }
+
+    el.textContent =
+      "Stored: " +
+      (meta.name || "resume.pdf") +
+      " (" +
+      formatBytes(meta.size || 0) +
+      ") • " +
+      (meta.createdAt ? new Date(meta.createdAt).toLocaleString() : "");
+    if (btnDownload) btnDownload.disabled = false;
+    if (btnClear) btnClear.disabled = false;
+  }
+
+  function readFileAsBase64(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("Failed to read file"));
+      reader.onload = () => {
+        const arr = reader.result; // ArrayBuffer
+        resolve(arrayBufferToBase64(arr));
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  function arrayBufferToBase64(arrayBuffer) {
+    const bytes = new Uint8Array(arrayBuffer);
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+    }
+    return btoa(binary);
+  }
+
+  function downloadBase64File(base64, filename, mime) {
+    const byteChars = atob(base64);
+    const byteNumbers = new Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+    const blob = new Blob([new Uint8Array(byteNumbers)], { type: mime || "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename || "download";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  function formatBytes(bytes) {
+    const b = Number(bytes) || 0;
+    if (b < 1024) return b + " B";
+    const kb = b / 1024;
+    if (kb < 1024) return kb.toFixed(1) + " KB";
+    const mb = kb / 1024;
+    return mb.toFixed(1) + " MB";
   }
 })();
