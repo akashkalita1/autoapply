@@ -11,9 +11,11 @@
 | Feature | Description |
 |---------|-------------|
 | 🎯 **Smart Autofill** | Instantly fill job application forms with your saved profile |
-| 🧠 **AI Resume Optimizer** | Tailor your resume to match any job description for maximum ATS score |
+| 🔔 **Opportunity hints** | On job pages, a small in-page card offers **Autofill**, **Optimize**, or **Attach resume** when the page looks relevant; the toolbar badge lights up too |
+| 🧠 **AI Resume Optimizer** | Two-step flow: preview gaps vs. the JD, then confirm to tailor your resume and generate a cover letter |
 | 📝 **Cover Letter Generator** | Auto-generate targeted, human-sounding cover letters |
 | 📊 **Requirements Gap Analysis** | See exactly which qualifications you meet, partially meet, or need to address |
+| 📎 **Resume file fields** | Upload a **Base Resume PDF** in Options; the extension can attach it to resume/CV upload fields (and during autofill when mapped) |
 | 🗂️ **Per-Job Document Vault** | Keep tailored resumes and cover letters organized by job |
 | 🖨️ **One-Click PDF Export** | Download print-ready resume and cover letter files instantly |
 
@@ -30,46 +32,57 @@
 
 ### 2️⃣ Set Up Your Profile
 
-1. Click the extension icon → **Edit Profile & Settings**
+1. Click the extension icon → **Edit profile & settings**
 2. Fill in your info manually, or paste JSON that matches the `applicant_data.json` schema (that filename is **gitignored** in the repo; see **Resume Tool** below for the CLI layout)
 3. 📄 Paste resume JSON (`master_resume.json` shape) in the **Resume Data** section — same local-only convention as the CLI
-4. 🔑 Add your **OpenAI API key** and enable LLM
-5. Click **Save**
+4. 📎 (Recommended) Upload a **Base Resume PDF** so the extension can attach it to resume/CV file fields and the in-page **Attach** action
+5. 🔑 Add your **OpenAI API key** and enable LLM
+6. Click **Save**
 
 ### 3️⃣ Autofill a Job Application
 
-1. Open any job application form
-2. Click **🔍 Preview** to see proposed values
+1. Open any job application form (optional: use the corner **✦ Job Autofill** card → **Autofill** if it appears)
+2. Click **🔍 Preview** to see proposed values (resume upload fields may show as filled when a base PDF is configured)
 3. Review the blue/yellow highlights on the page
-4. Click **✅ Confirm & Fill**
+4. Click **✅ Confirm & Fill** (or **✏️ Fill** from the popup)
 
 ### 4️⃣ AI Optimize for a Job
 
 1. Open any job posting (job board, company careers page, anywhere)
-2. Click **⚡ AI Optimize**
-3. Wait ~15-30 seconds while the AI:
-   - 📖 Reads the job description
-   - 🔍 Analyzes requirements & keywords
-   - ✏️ Tailors your resume for maximum ATS match
-   - 📝 Writes a targeted cover letter
-4. 📥 Both files auto-download to your computer
-5. 📊 Review the requirements gap report in the popup
+2. Click **✨ Optimize** in the popup (or **Optimize** on the in-page card — the extension badge may show ✨ as a reminder)
+3. **Phase 1 — Resume analysis:** The extension analyzes the JD and shows a short preview of missing skills, qualifications, and keywords vs. your resume JSON so you know what will be addressed before any heavy work runs
+4. **Phase 2 — Run optimization:** Confirm to run tailoring + cover letter (~15–30 seconds):
+   - 📖 JD analysis (keywords, skills, qualifications)
+   - ✏️ Tailored resume JSON
+   - 📝 Targeted cover letter
+5. 📥 Downloads and gap report appear in the popup as before
 
 ---
 
 ## 🧠 AI Resume Optimizer — Deep Dive
 
-The flagship feature. One click transforms your resume and generates a cover letter optimized for any specific job.
+The flagship feature: you review a **gap preview** first, then confirm to tailor the resume and generate a cover letter for that job.
+
+### 🔔 On-page opportunities
+
+On many job and application pages the extension detects:
+
+- **Form fields** it can autofill
+- **Job description** text (for optimize)
+- **Resume/CV file** inputs
+
+When it finds something useful, a small **✦ Job Autofill** card appears (bottom-right). You can dismiss it for the session; the toolbar icon can show a **!** badge when an opportunity was detected. Single-page apps are re-scanned after DOM changes (debounced).
 
 ### 🔄 How It Works
 
 ```
-📄 Job Page → 🔍 Extract JD → 🧠 Analyze Requirements → ✏️ Optimize Resume → 📝 Generate Cover Letter → 📥 Download
+📄 Job Page → 🔍 Extract JD → Phase 1: analyze JD + local gap preview → ✋ You confirm
+    → Phase 2: ✏️ Tailor resume + 📝 cover letter → 📥 Download / vault
 ```
 
 1. **Extracts the job description** from any page — works on LinkedIn, Greenhouse, Lever, Workday, Jobright, Samsung Careers, TikTok Careers, Google Careers, and thousands more
-2. **Analyzes the JD** using AI to extract keywords, hard skills, required qualifications, responsibilities, tone, and domain
-3. **Tailors your resume** by rewriting bullet points to mirror the JD's language, reordering for relevance, and ensuring maximum keyword coverage
+2. **Phase 1** — AI analyzes the JD; the popup compares highlights to your resume JSON and lists likely **missing** skills, qualifications, and keywords (quick transparency before spend)
+3. **Phase 2** (after you confirm) — **Tailors your resume** by rewriting bullet points to mirror the JD's language, reordering for relevance, and improving keyword coverage
 4. **Fills qualification gaps** — if your resume doesn't address a key requirement, the optimizer strategically restructures your projects section to better highlight relevant skills and experience
 5. **Generates a cover letter** that references the specific company, role, and 1-2 key responsibilities with concrete examples from your experience
 
@@ -130,6 +143,7 @@ The core form-filling system works independently of the AI features:
 - ⚛️ **Framework-safe** event dispatch for React, Angular, and Vue forms
 - 🔌 **Built-in adapters** for Greenhouse, Lever, and Workday
 - 🤖 **Optional LLM fallback** for ambiguous or unusual fields
+- 📎 **Resume PDF on file inputs** — when you have a **Base Resume PDF** saved, mappings to resume/CV-style file fields can attach it via the `DataTransfer` API (same mechanism as the widget **Attach** button)
 - 🚫 **No auto-submit** — you always stay in control
 
 ---
@@ -161,15 +175,17 @@ jobautofill/
 │   │   ├── resume_html_builder.js   ← 🆕 PDF-ready resume/cover letter renderer
 │   │   └── utils.js
 │   ├── 📄 content/             Content scripts (page interaction)
-│   │   ├── content_main.js          ← 🆕 JD extraction engine
-│   │   ├── dom_filler.js
+│   │   ├── content_main.js          ← JD extraction + opportunity re-scan (MutationObserver)
+│   │   ├── dom_filler.js            ← file inputs: synthetic File from base PDF when mapped
+│   │   ├── notification_widget.js   ← floating ✦ card (Autofill / Optimize / Attach)
+│   │   ├── opportunity_detector.js  ← detects forms, JD, resume file inputs; badge ping
 │   │   └── site_adapters/      Greenhouse, Lever, Workday, generic
 │   ├── ⚙️ background/          Service worker
 │   │   └── service_worker.js        ← 🆕 AI prompts, callOpenAi wrapper, resume tailoring
-│   ├── 🖥️ popup/               Extension popup UI
-│   │   ├── popup.html               ← 🆕 AI Optimize button + results section
-│   │   ├── popup.css                ← 🆕 Gap analysis + diff styles
-│   │   └── popup.js                 ← 🆕 AI handler, auto-download, rendering
+│   ├── 🖥️ popup/               Extension popup UI (light cards, ✨ Optimize, two-phase AI)
+│   │   ├── popup.html
+│   │   ├── popup.css
+│   │   └── popup.js
 │   └── ⚙️ options/             Settings page
 │       ├── options.html             ← 🆕 Style profile textarea
 │       └── options.js               ← 🆕 Style profile load/save
@@ -228,7 +244,7 @@ The extension generates print-ready HTML files using the exact same CSS as the P
 
 ## ⚠️ Limitations
 
-- 📎 Browser extensions cannot programmatically set file upload inputs
+- 📎 **File uploads:** The extension sets files with `DataTransfer` where the browser allows; some ATS sites use custom upload widgets or shadow DOM and may still ignore or block synthetic files
 - 🔒 Cross-origin iframes may block content script access on some ATS flows
 - 🏗️ Workday custom controls may need additional adapter tuning
 - 💾 Document storage is local to the browser profile (no cloud sync)
