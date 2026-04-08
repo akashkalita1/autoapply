@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "Job Autofill",
+  "version": "1.0.0",
+  "description": "Automatically fill job application forms using your saved profile data.",
+  "permissions": ["activeTab", "storage"],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background/service_worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "shared/constants.js",
+        "shared/field_extraction.js",
+        "shared/field_matching.js",
+        "shared/event_dispatch.js",
+        "shared/prompts.js",
+        "shared/utils.js",
+        "content/site_adapters/base_adapter.js",
+        "content/site_adapters/generic.js",
+        "content/site_adapters/greenhouse.js",
+        "content/site_adapters/lever.js",
+        "content/site_adapters/workday.js",
+        "content/site_adapters/adapter_registry.js",
+        "content/dom_filler.js",
+        "content/content_main.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options/options.html"
+}

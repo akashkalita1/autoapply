@@ -1,3 +1,5 @@
+# After installing, run:  playwright install chromium
 openai
 python-dotenv
 weasyprint
+playwright

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=400">
+  <title>Job Autofill</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <h1 class="title">Job Autofill</h1>
+      <span id="statusBadge" class="badge badge-neutral">Ready</span>
+    </header>
+
+    <!-- Profile summary -->
+    <section id="profileSection" class="section">
+      <div class="profile-summary" id="profileSummary">
+        <p class="placeholder-text">No profile configured.</p>
+      </div>
+      <a href="#" id="openOptions" class="link-sm">Edit Profile &amp; Settings</a>
+    </section>
+
+    <!-- Action buttons -->
+    <section class="section actions">
+      <button id="btnPreview" class="btn btn-secondary" disabled>
+        <span class="btn-icon">&#128270;</span> Preview
+      </button>
+      <button id="btnFill" class="btn btn-primary" disabled>
+        <span class="btn-icon">&#9998;</span> Fill Fields
+      </button>
+    </section>
+
+    <!-- Preview results (hidden by default) -->
+    <section id="previewSection" class="section hidden">
+      <div class="section-header">
+        <h2 class="section-title">Preview</h2>
+        <button id="btnClearPreview" class="btn-text">Clear</button>
+      </div>
+      <div id="previewStats" class="stats"></div>
+      <div id="previewList" class="result-list"></div>
+      <button id="btnConfirmFill" class="btn btn-primary btn-full">
+        Confirm &amp; Fill
+      </button>
+    </section>
+
+    <!-- Fill results (hidden by default) -->
+    <section id="resultsSection" class="section hidden">
+      <h2 class="section-title">Results</h2>
+      <div id="resultStats" class="stats"></div>
+      <div id="resultList" class="result-list"></div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span id="adapterName" class="text-muted"></span>
+      <span id="llmStatus" class="text-muted"></span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
