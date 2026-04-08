@@ -130,6 +130,11 @@ def main() -> bool:
     save_json(tailored, "outputs/tailored_resume.json")
     print_diff(master, tailored)
     print("✓ Saved to outputs/tailored_resume.json")
+
+    from resume_renderer import render_resume
+    if render_resume():
+        print("✓ Saved to outputs/tailored_resume.pdf")
+
     return True
 
 
