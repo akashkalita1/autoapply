@@ -398,18 +398,24 @@ window.JobAutofill = window.JobAutofill || {};
     }
   }, 1500);
 
-  // Re-detect on significant DOM mutations (for SPAs)
-  var mutationTimer = null;
-  var observer = new MutationObserver(function () {
-    if (mutationTimer) clearTimeout(mutationTimer);
-    mutationTimer = setTimeout(function () {
+  // Re-detect only on SPA navigation (URL or title change), not on every DOM
+  // mutation. A broad subtree MutationObserver causes an infinite loop because
+  // showOpportunityWidget() itself modifies the DOM, re-triggering detection.
+  // Poll every 30 s (lightweight); store the ID so it can be cleared on unload.
+  var _lastUrl = window.location.href;
+  var _lastTitle = document.title;
+  var _spaNavTimer = setInterval(function () {
+    var url = window.location.href;
+    var title = document.title;
+    if (url !== _lastUrl || title !== _lastTitle) {
+      _lastUrl = url;
+      _lastTitle = title;
       if (JA.resetOpportunityDetection) JA.resetOpportunityDetection();
       if (JA.detectOpportunities) JA.detectOpportunities();
-    }, 2000);
-  });
+    }
+  }, 30000);
 
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
+  window.addEventListener("pagehide", function () {
+    clearInterval(_spaNavTimer);
   });
 })();

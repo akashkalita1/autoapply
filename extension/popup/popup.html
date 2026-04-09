@@ -2,16 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=400">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Job Autofill</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <div class="container">
+  <div class="container" id="mainContainer">
     <!-- Header -->
     <header class="header">
-      <h1 class="title">✦ Job Autofill</h1>
-      <span id="statusBadge" class="badge badge-neutral">Ready</span>
+      <div class="header-left">
+        <h1 class="title">✦ Job Autofill</h1>
+        <span id="statusBadge" class="badge badge-neutral">Ready</span>
+      </div>
+      <button id="btnCollapse" class="btn-collapse" title="Collapse panel">⟵ Hide</button>
     </header>
 
     <!-- Profile -->
@@ -22,16 +25,23 @@
       <a href="#" id="openOptions" class="link-sm">Edit profile &amp; settings</a>
     </section>
 
-    <!-- Action buttons -->
+    <!-- Action buttons row 1: Autofill -->
     <section class="actions">
       <button id="btnPreview" class="btn btn-secondary" disabled>
         🔍 Preview
       </button>
       <button id="btnFill" class="btn btn-primary" disabled>
-        ✏️ Fill
+        ✏️ Fill Form
       </button>
+    </section>
+
+    <!-- Action buttons row 2: AI -->
+    <section class="actions-row2">
       <button id="btnAiOptimize" class="btn btn-ai" disabled title="Enable LLM in Options to use AI Optimize">
-        ✨ Optimize
+        ✨ Optimize Resume
+      </button>
+      <button id="btnCoverLetter" class="btn btn-cover" disabled title="Enable LLM in Options to generate a cover letter">
+        ✉️ Cover Letter
       </button>
     </section>
 
@@ -107,6 +117,8 @@
       </div>
       <div id="aiStatus" class="ai-status"></div>
 
+      <div id="aiOptimizeSummary" class="optimize-summary hidden"></div>
+
       <div id="aiGapSection" class="hidden">
         <h3 class="subsection-title">Requirements Gap</h3>
         <div id="aiGapList" class="gap-list"></div>
@@ -120,6 +132,23 @@
       <div id="aiCoverLetterSection" class="hidden">
         <h3 class="subsection-title">Cover Letter</h3>
         <textarea id="aiCoverLetter" rows="8" readonly></textarea>
+      </div>
+    </section>
+
+    <!-- Standalone Cover Letter section -->
+    <section id="coverLetterSection" class="section hidden">
+      <div class="section-header">
+        <h2 class="section-title">✉️ Cover Letter</h2>
+        <button id="btnCancelCoverLetter" class="btn-text">Cancel</button>
+      </div>
+      <div id="coverLetterStatus" class="ai-status"></div>
+      <div id="coverLetterOutput" class="cover-letter-output hidden">
+        <textarea id="standaloneCoverLetter" rows="10"></textarea>
+        <div class="cover-letter-actions">
+          <button id="btnDownloadCoverLetter" class="btn btn-cover btn-full">
+            ↓ Download Cover Letter
+          </button>
+        </div>
       </div>
     </section>
 

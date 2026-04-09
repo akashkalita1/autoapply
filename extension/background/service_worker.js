@@ -679,6 +679,9 @@ async function handleMessage(msg, sender) {
     case "executeResumeOptimization":
       return await handleExecuteResumeOptimization(msg);
 
+    case "generateCoverLetter":
+      return await handleGenerateCoverLetter(msg);
+
     case "opportunityDetected":
       return handleOpportunityDetected(msg, sender);
 
@@ -927,6 +930,10 @@ async function handleAnalyzeResumeGaps(msg) {
     return resumeText.indexOf(skill.toLowerCase()) === -1;
   });
 
+  const matchedSkills = (jdAnalysis.hard_skills || []).filter(function (skill) {
+    return resumeText.indexOf(skill.toLowerCase()) !== -1;
+  });
+
   const missingQualifications = (jdAnalysis.required_qualifications || []).filter(function (qual) {
     var words = qual.toLowerCase().split(/\s+/).filter(function (w) { return w.length > 3; });
     var matchCount = 0;
@@ -940,12 +947,18 @@ async function handleAnalyzeResumeGaps(msg) {
     return resumeText.indexOf(kw.toLowerCase()) === -1;
   });
 
+  const matchedKeywords = (jdAnalysis.keywords || []).filter(function (kw) {
+    return resumeText.indexOf(kw.toLowerCase()) !== -1;
+  });
+
   return {
     ok: true,
     jdAnalysis: jdAnalysis,
     missingSkills: missingSkills,
+    matchedSkills: matchedSkills,
     missingQualifications: missingQualifications,
     missingKeywords: missingKeywords,
+    matchedKeywords: matchedKeywords,
   };
 }
 
@@ -983,6 +996,48 @@ async function handleExecuteResumeOptimization(msg) {
     requirementsGaps: requirementsGaps,
     diff: diff,
   };
+}
+
+// ---- Side panel opener ------------------------------------------------------
+
+chrome.action.onClicked.addListener(function (tab) {
+  chrome.sidePanel.open({ windowId: tab.windowId });
+});
+
+// Keep side panel enabled globally
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(function () {});
+
+// ---- Standalone cover letter generation ------------------------------------
+
+async function handleGenerateCoverLetter(msg) {
+  const apiKey = await getApiKey();
+  if (!apiKey) return { ok: false, error: "No OpenAI API key configured. Set it in Options." };
+  const llmOn = await isLlmEnabled();
+  if (!llmOn) return { ok: false, error: "LLM is disabled. Enable it in Options." };
+  const resume = await getResume();
+  if (!resume) return { ok: false, error: "No resume JSON configured. Upload it in Options." };
+
+  const jdText = msg.jdText;
+  if (!jdText || jdText.trim().length < 30) {
+    return { ok: false, error: "Could not extract a job description from this page." };
+  }
+
+  let jdAnalysis;
+  try {
+    jdAnalysis = await analyzeJd(jdText, apiKey);
+  } catch (err) {
+    return { ok: false, error: "JD analysis failed: " + (err.message || String(err)) };
+  }
+
+  const styleProfile = await getStyleProfile();
+  let coverLetterText;
+  try {
+    coverLetterText = await generateCoverLetterText(resume, jdAnalysis, styleProfile, apiKey);
+  } catch (err) {
+    return { ok: false, error: "Cover letter generation failed: " + (err.message || String(err)) };
+  }
+
+  return { ok: true, coverLetterText, jdAnalysis };
 }
 
 // Log extension startup
