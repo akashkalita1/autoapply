@@ -1,5 +1,6 @@
 /**
- * Popup / Side-panel script for the Job Autofill extension.
+ * Tab-based UI script for the Job Autofill extension.
+ * Opened as a new tab per job page; reads originTabId from URL params.
  */
 
 (function () {
@@ -70,6 +71,22 @@
   let cachedJdText       = null;
   let lastCoverLetterText= null;
 
+  // Tab ID of the job page that spawned this extension tab
+  var originTabId = (function () {
+    var params = new URLSearchParams(window.location.search);
+    var id = parseInt(params.get("originTabId"), 10);
+    return isNaN(id) ? null : id;
+  })();
+
+  function getOriginTabId() {
+    return new Promise(function (resolve) {
+      if (originTabId) return resolve(originTabId);
+      chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+        resolve(tabs && tabs[0] ? tabs[0].id : null);
+      });
+    });
+  }
+
   // ---- Init ----
 
   init();
@@ -107,9 +124,9 @@
     }
 
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab && tab.id) {
-        const resp = await chrome.tabs.sendMessage(tab.id, { action: "ping" });
+      var tabId = await getOriginTabId();
+      if (tabId) {
+        const resp = await chrome.tabs.sendMessage(tabId, { action: "ping" });
         if (resp && resp.ok) {
           setStatus("Ready", "neutral");
         }
@@ -153,7 +170,8 @@
     btnPreview.disabled = true;
     btnFill.disabled = true;
 
-    const result = await sendBg({ action: "startAutofill", mode: "preview" });
+    var tabId = await getOriginTabId();
+    const result = await sendBg({ action: "startAutofill", mode: "preview", tabId: tabId });
 
     if (result.ok) {
       currentMappings = result.mappings;
@@ -181,7 +199,8 @@
     btnFill.disabled = true;
     btnPreview.disabled = true;
 
-    const result = await sendBg({ action: "startAutofill", mode: "fill" });
+    var tabId = await getOriginTabId();
+    const result = await sendBg({ action: "startAutofill", mode: "fill", tabId: tabId });
 
     if (result.ok) {
       renderResults(result);
@@ -202,9 +221,9 @@
   });
 
   btnClearPreview.addEventListener("click", async function () {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab && tab.id) {
-      try { await chrome.tabs.sendMessage(tab.id, { action: "clearPreview" }); } catch (e) { /* ignore */ }
+    var tabId = await getOriginTabId();
+    if (tabId) {
+      try { await chrome.tabs.sendMessage(tabId, { action: "clearPreview" }); } catch (e) { /* ignore */ }
     }
     previewSection.classList.add("hidden");
     currentMappings = null;
@@ -216,7 +235,8 @@
     setStatus("🔵 Filling…", "active");
     btnConfirmFill.disabled = true;
 
-    const result = await sendBg({ action: "confirmFill", mappings: currentMappings });
+    var tabId = await getOriginTabId();
+    const result = await sendBg({ action: "confirmFill", mappings: currentMappings, tabId: tabId });
 
     if (result.ok) {
       previewSection.classList.add("hidden");
@@ -331,9 +351,9 @@
 
       var jdResult;
       try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (!tab || !tab.id) { showAiPreviewError("No active tab found."); return; }
-        jdResult = await chrome.tabs.sendMessage(tab.id, { action: "extractJobDescription" });
+        var tabId = await getOriginTabId();
+        if (!tabId) { showAiPreviewError("No origin tab found."); return; }
+        jdResult = await chrome.tabs.sendMessage(tabId, { action: "extractJobDescription" });
       } catch (e) {
         showAiPreviewError("Could not reach content script. Try refreshing the page.");
         return;
@@ -351,9 +371,9 @@
 
       if (!currentJobKey) {
         try {
-          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-          if (tab && tab.id) {
-            const ctx = await chrome.tabs.sendMessage(tab.id, { action: "getJobContext" });
+          var ctxTabId = await getOriginTabId();
+          if (ctxTabId) {
+            const ctx = await chrome.tabs.sendMessage(ctxTabId, { action: "getJobContext" });
             if (ctx && ctx.ok) {
               currentJobKey = ctx.jobKey;
               currentJobMeta = ctx.jobMeta;
@@ -460,9 +480,9 @@
 
       var jdResult;
       try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (!tab || !tab.id) { showCoverLetterError("No active tab found."); return; }
-        jdResult = await chrome.tabs.sendMessage(tab.id, { action: "extractJobDescription" });
+        var tabId = await getOriginTabId();
+        if (!tabId) { showCoverLetterError("No origin tab found."); return; }
+        jdResult = await chrome.tabs.sendMessage(tabId, { action: "extractJobDescription" });
       } catch (e) {
         showCoverLetterError("Could not reach content script. Try refreshing the page.");
         return;
@@ -478,9 +498,9 @@
 
       if (!currentJobKey) {
         try {
-          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-          if (tab && tab.id) {
-            const ctx = await chrome.tabs.sendMessage(tab.id, { action: "getJobContext" });
+          var ctxTabId = await getOriginTabId();
+          if (ctxTabId) {
+            const ctx = await chrome.tabs.sendMessage(ctxTabId, { action: "getJobContext" });
             if (ctx && ctx.ok) {
               currentJobKey = ctx.jobKey;
               currentJobMeta = ctx.jobMeta;
@@ -590,7 +610,15 @@
   function renderAiPreview(gapResult) {
     var html = "";
 
-    var matched  = (gapResult.matchedSkills || []).concat(gapResult.matchedKeywords || []);
+    // Build a lookup for LLM reasons by requirement text
+    var reasonMap = {};
+    (gapResult.gapDetails || []).forEach(function (d) {
+      if (d && d.requirement) reasonMap[d.requirement] = d.reason || "";
+    });
+
+    var matched  = (gapResult.matchedSkills || [])
+      .concat(gapResult.matchedKeywords || [])
+      .concat(gapResult.matchedQualifications || []);
     var missing  = gapResult.missingSkills || [];
     var quals    = gapResult.missingQualifications || [];
     var keywords = gapResult.missingKeywords || [];
@@ -604,7 +632,8 @@
         '<span class="ai-preview-label">Resume has</span>' +
         '<span class="ai-preview-items skill-tags">' +
         matchedUniq.map(function (s) {
-          return '<span class="skill-tag skill-tag-green">' + escHtml(s) + '</span>';
+          var tip = reasonMap[s] || reasonMap["Skill: " + s] || reasonMap["Keyword/technology: " + s] || "";
+          return '<span class="skill-tag skill-tag-green" title="' + escHtml(tip) + '">' + escHtml(s) + '</span>';
         }).join("") +
         '</span></div>';
     }
@@ -615,7 +644,8 @@
         '<span class="ai-preview-label">Missing skills</span>' +
         '<span class="ai-preview-items skill-tags">' +
         missing.map(function (s) {
-          return '<span class="skill-tag skill-tag-red">' + escHtml(s) + '</span>';
+          var tip = reasonMap["Skill: " + s] || reasonMap[s] || "";
+          return '<span class="skill-tag skill-tag-red" title="' + escHtml(tip) + '">' + escHtml(s) + '</span>';
         }).join("") +
         '</span></div>';
     }
@@ -626,7 +656,8 @@
         '<span class="ai-preview-label">Gaps</span>' +
         '<span class="ai-preview-items skill-tags">' +
         quals.map(function (q) {
-          return '<span class="skill-tag skill-tag-yellow">' + escHtml(truncate(q, 60)) + '</span>';
+          var tip = reasonMap[q] || "";
+          return '<span class="skill-tag skill-tag-yellow" title="' + escHtml(tip) + '">' + escHtml(truncate(q, 60)) + '</span>';
         }).join("") +
         '</span></div>';
     }
@@ -637,7 +668,8 @@
         '<span class="ai-preview-label">Keywords missing</span>' +
         '<span class="ai-preview-items skill-tags">' +
         keywords.map(function (k) {
-          return '<span class="skill-tag skill-tag-red">' + escHtml(k) + '</span>';
+          var tip = reasonMap["Keyword/technology: " + k] || reasonMap[k] || "";
+          return '<span class="skill-tag skill-tag-red" title="' + escHtml(tip) + '">' + escHtml(k) + '</span>';
         }).join("") +
         '</span></div>';
     }
@@ -935,13 +967,13 @@
 
   async function assertContentScript() {
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab || !tab.id) {
-        showError("No active tab found.");
+      var tabId = await getOriginTabId();
+      if (!tabId) {
+        showError("No origin tab found.");
         setStatus("Error", "error");
         return false;
       }
-      const resp = await chrome.tabs.sendMessage(tab.id, { action: "ping" });
+      const resp = await chrome.tabs.sendMessage(tabId, { action: "ping" });
       if (!resp || !resp.ok) throw new Error("No response");
       return true;
     } catch (e) {
@@ -953,9 +985,9 @@
 
   async function refreshJobContextAndDocs() {
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab || !tab.id) return;
-      const resp = await chrome.tabs.sendMessage(tab.id, { action: "getJobContext" });
+      var tabId = await getOriginTabId();
+      if (!tabId) return;
+      const resp = await chrome.tabs.sendMessage(tabId, { action: "getJobContext" });
       if (resp && resp.ok && resp.jobKey) {
         currentJobKey  = resp.jobKey;
         currentJobMeta = resp.jobMeta || null;

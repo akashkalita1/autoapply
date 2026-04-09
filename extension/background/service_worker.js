@@ -416,6 +416,60 @@ async function analyzeJd(jdText, apiKey) {
   });
 }
 
+// ---- LLM-powered qualification gap check ------------------------------------
+
+const REQUIREMENTS_GAP_PROMPT =
+  "ROLE: You are an expert resume screener.\n\n" +
+  "TASK: For each job requirement provided, determine whether the candidate's resume demonstrates that they meet it.\n\n" +
+  "INPUT: You receive a candidate resume (JSON) and a list of job requirements (strings).\n\n" +
+  "OUTPUT: Return ONLY valid JSON with this schema:\n" +
+  '{ "results": [ { "requirement": string, "status": "met"|"partially_met"|"not_met", "reason": string } ] }\n\n' +
+  "RULES:\n" +
+  "- Base your judgment ONLY on evidence present in the resume. Do not assume or infer facts not stated.\n" +
+  "- A completed degree satisfies enrollment/coursework requirements for that degree level.\n" +
+  "- Work experience with a technology counts as skill evidence even if not listed under skills.\n" +
+  "- 'met' = resume clearly demonstrates the requirement is satisfied.\n" +
+  "- 'partially_met' = resume shows related but not exact evidence.\n" +
+  "- 'not_met' = no evidence in the resume for this requirement.\n" +
+  "- 'reason' should be 1 concise sentence citing the relevant resume evidence (or lack thereof).\n" +
+  "- Return one result per requirement, in the same order as the input list.\n\n" +
+  "IMPORTANT: Return ONLY valid JSON — no markdown fences, no commentary.";
+
+async function llmCheckQualifications(resume, qualifications, skills, keywords, apiKey) {
+  var allRequirements = []
+    .concat(qualifications || [])
+    .concat((skills || []).map(function (s) { return "Skill: " + s; }))
+    .concat((keywords || []).map(function (k) { return "Keyword/technology: " + k; }));
+
+  if (allRequirements.length === 0) {
+    return { qualifications: [], skills: [], keywords: [] };
+  }
+
+  var userContent =
+    "CANDIDATE RESUME:\n" + JSON.stringify(resume, null, 2) + "\n\n" +
+    "JOB REQUIREMENTS:\n" + JSON.stringify(allRequirements, null, 2);
+
+  var parsed = await callOpenAi({
+    systemPrompt: REQUIREMENTS_GAP_PROMPT,
+    userContent: userContent,
+    apiKey: apiKey,
+    expectJson: true,
+    requiredKeys: ["results"],
+    temperature: 0.1,
+  });
+
+  var results = parsed.results || [];
+
+  var qualCount = (qualifications || []).length;
+  var skillCount = (skills || []).length;
+
+  return {
+    qualifications: results.slice(0, qualCount),
+    skills: results.slice(qualCount, qualCount + skillCount),
+    keywords: results.slice(qualCount + skillCount),
+  };
+}
+
 async function tailorResume(masterResume, jdAnalysis, apiKey) {
   const userContent =
     "MASTER RESUME:\n" + JSON.stringify(masterResume, null, 2) + "\n\n" +
@@ -716,16 +770,20 @@ async function handleAutofill(msg) {
 
   const mode = msg.mode || "preview"; // "preview" or "fill"
 
-  // 1. Get the active tab
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !tab.id) {
+  // 1. Get the target tab (from message or fallback to active tab)
+  var tabId = msg.tabId;
+  if (!tabId) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    tabId = tab && tab.id;
+  }
+  if (!tabId) {
     return { ok: false, error: "No active tab found." };
   }
 
   // 2. Ask content script to scan fields
   let scanResult;
   try {
-    scanResult = await chrome.tabs.sendMessage(tab.id, { action: "scanFields" });
+    scanResult = await chrome.tabs.sendMessage(tabId, { action: "scanFields" });
   } catch (err) {
     return { ok: false, error: "Could not reach content script. Try refreshing the page." };
   }
@@ -804,7 +862,7 @@ async function handleAutofill(msg) {
   // 6. Send to content script
   if (mode === "preview") {
     try {
-      await chrome.tabs.sendMessage(tab.id, { action: "previewFill", mappings });
+      await chrome.tabs.sendMessage(tabId, { action: "previewFill", mappings });
     } catch (err) {
       return { ok: false, error: "Preview failed: " + String(err) };
     }
@@ -821,16 +879,20 @@ async function handleAutofill(msg) {
   }
 
   // Direct fill (skip preview)
-  const filled = await executeFillOnTab(tab.id, mappings);
+  const filled = await executeFillOnTab(tabId, mappings);
   return { ...filled, jobKey, jobMeta };
 }
 
 async function handleConfirmFill(msg) {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !tab.id) {
+  var targetTabId = msg.tabId;
+  if (!targetTabId) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    targetTabId = tab && tab.id;
+  }
+  if (!targetTabId) {
     return { ok: false, error: "No active tab found." };
   }
-  return await executeFillOnTab(tab.id, msg.mappings);
+  return await executeFillOnTab(targetTabId, msg.mappings);
 }
 
 async function executeFillOnTab(tabId, mappings) {
@@ -923,33 +985,60 @@ async function handleAnalyzeResumeGaps(msg) {
     return { ok: false, error: "JD analysis failed: " + (err.message || String(err)) };
   }
 
-  // Local gap check against resume text
-  const resumeText = flattenResumeText(resume);
+  // LLM-powered gap check — sends resume + all extracted requirements to GPT
+  let gapCheck;
+  try {
+    gapCheck = await llmCheckQualifications(
+      resume,
+      jdAnalysis.required_qualifications || [],
+      jdAnalysis.hard_skills || [],
+      jdAnalysis.keywords || [],
+      apiKey
+    );
+  } catch (err) {
+    console.error("[JobAutofill BG] LLM gap check failed:", err);
+    return { ok: false, error: "Gap analysis failed: " + (err.message || String(err)) };
+  }
 
-  const missingSkills = (jdAnalysis.hard_skills || []).filter(function (skill) {
-    return resumeText.indexOf(skill.toLowerCase()) === -1;
-  });
+  var qualResults  = gapCheck.qualifications || [];
+  var skillResults = gapCheck.skills || [];
+  var kwResults    = gapCheck.keywords || [];
 
-  const matchedSkills = (jdAnalysis.hard_skills || []).filter(function (skill) {
-    return resumeText.indexOf(skill.toLowerCase()) !== -1;
-  });
-
-  const missingQualifications = (jdAnalysis.required_qualifications || []).filter(function (qual) {
-    var words = qual.toLowerCase().split(/\s+/).filter(function (w) { return w.length > 3; });
-    var matchCount = 0;
-    for (var i = 0; i < words.length; i++) {
-      if (resumeText.indexOf(words[i]) !== -1) matchCount++;
+  var missingSkills = [];
+  var matchedSkills = [];
+  for (var i = 0; i < skillResults.length; i++) {
+    var sr = skillResults[i];
+    var skillName = (jdAnalysis.hard_skills || [])[i] || sr.requirement;
+    if (sr.status === "not_met") {
+      missingSkills.push(skillName);
+    } else {
+      matchedSkills.push(skillName);
     }
-    return words.length === 0 || (matchCount / words.length) < 0.4;
-  });
+  }
 
-  const missingKeywords = (jdAnalysis.keywords || []).filter(function (kw) {
-    return resumeText.indexOf(kw.toLowerCase()) === -1;
-  });
+  var missingQualifications = [];
+  var matchedQualifications = [];
+  for (var j = 0; j < qualResults.length; j++) {
+    var qr = qualResults[j];
+    var qualName = (jdAnalysis.required_qualifications || [])[j] || qr.requirement;
+    if (qr.status === "not_met") {
+      missingQualifications.push(qualName);
+    } else {
+      matchedQualifications.push(qualName);
+    }
+  }
 
-  const matchedKeywords = (jdAnalysis.keywords || []).filter(function (kw) {
-    return resumeText.indexOf(kw.toLowerCase()) !== -1;
-  });
+  var missingKeywords = [];
+  var matchedKeywords = [];
+  for (var k = 0; k < kwResults.length; k++) {
+    var kr = kwResults[k];
+    var kwName = (jdAnalysis.keywords || [])[k] || kr.requirement;
+    if (kr.status === "not_met") {
+      missingKeywords.push(kwName);
+    } else {
+      matchedKeywords.push(kwName);
+    }
+  }
 
   return {
     ok: true,
@@ -957,8 +1046,10 @@ async function handleAnalyzeResumeGaps(msg) {
     missingSkills: missingSkills,
     matchedSkills: matchedSkills,
     missingQualifications: missingQualifications,
+    matchedQualifications: matchedQualifications,
     missingKeywords: missingKeywords,
     matchedKeywords: matchedKeywords,
+    gapDetails: qualResults.concat(skillResults).concat(kwResults),
   };
 }
 
@@ -998,14 +1089,12 @@ async function handleExecuteResumeOptimization(msg) {
   };
 }
 
-// ---- Side panel opener ------------------------------------------------------
+// ---- Tab opener (opens popup.html in a new tab per job page) ----------------
 
 chrome.action.onClicked.addListener(function (tab) {
-  chrome.sidePanel.open({ windowId: tab.windowId });
+  var url = chrome.runtime.getURL("popup/popup.html") + "?originTabId=" + tab.id;
+  chrome.tabs.create({ url: url });
 });
-
-// Keep side panel enabled globally
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(function () {});
 
 // ---- Standalone cover letter generation ------------------------------------
 

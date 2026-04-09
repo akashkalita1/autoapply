@@ -3,11 +3,8 @@
   "name": "Job Autofill",
   "version": "1.0.0",
   "description": "Automatically fill job application forms using your saved profile data.",
-  "permissions": ["activeTab", "storage", "downloads", "sidePanel"],
+  "permissions": ["activeTab", "storage", "downloads"],
   "host_permissions": ["https://api.openai.com/*"],
-  "side_panel": {
-    "default_path": "popup/popup.html"
-  },
   "action": {
     "default_icon": {
       "16": "icons/icon16.png",

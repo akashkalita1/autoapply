@@ -18,11 +18,15 @@ window.JobAutofill = window.JobAutofill || {};
     if (!chrome.runtime || !chrome.runtime.id) return;
     try {
       chrome.runtime.sendMessage(msg, function (resp) {
-        if (chrome.runtime.lastError) return;
-        if (callback) callback(resp);
+        try {
+          if (chrome.runtime.lastError) return;
+          if (callback) callback(resp);
+        } catch (e) {
+          // Extension context was invalidated between send and callback
+        }
       });
     } catch (e) {
-      // Extension context was invalidated
+      // Extension context was invalidated at send time
     }
   }
 
