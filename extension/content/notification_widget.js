@@ -17,14 +17,10 @@ window.JobAutofill = window.JobAutofill || {};
   function safeSendMessage(msg, callback) {
     if (!chrome.runtime || !chrome.runtime.id) return;
     try {
-      if (callback) {
-        chrome.runtime.sendMessage(msg, function (resp) {
-          if (chrome.runtime.lastError) return;
-          callback(resp);
-        });
-      } else {
-        chrome.runtime.sendMessage(msg);
-      }
+      chrome.runtime.sendMessage(msg, function (resp) {
+        if (chrome.runtime.lastError) return;
+        if (callback) callback(resp);
+      });
     } catch (e) {
       // Extension context was invalidated
     }
