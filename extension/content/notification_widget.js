@@ -14,6 +14,22 @@ window.JobAutofill = window.JobAutofill || {};
   var DISMISS_KEY = "jaf_widget_dismissed";
   var AUTO_HIDE_MS = 30000;
 
+  function safeSendMessage(msg, callback) {
+    if (!chrome.runtime || !chrome.runtime.id) return;
+    try {
+      if (callback) {
+        chrome.runtime.sendMessage(msg, function (resp) {
+          if (chrome.runtime.lastError) return;
+          callback(resp);
+        });
+      } else {
+        chrome.runtime.sendMessage(msg);
+      }
+    } catch (e) {
+      // Extension context was invalidated
+    }
+  }
+
   var hideTimer       = null;
   var currentOpps     = null;   // remember opportunities so tab can restore widget
 
@@ -266,7 +282,7 @@ window.JobAutofill = window.JobAutofill || {};
         '<span class="jaf-w-label">' + (opportunities.fieldCount || "Form") + ' fields found</span>' +
         '<button class="jaf-w-btn jaf-w-btn-fill">Autofill</button>';
       row1.querySelector(".jaf-w-btn").addEventListener("click", function () {
-        chrome.runtime.sendMessage({ action: "startAutofill", mode: "fill" });
+        safeSendMessage({ action: "startAutofill", mode: "fill" });
         collapseToTab();
       });
       body.appendChild(row1);
@@ -280,7 +296,7 @@ window.JobAutofill = window.JobAutofill || {};
         '<span class="jaf-w-label">Optimize your resume</span>' +
         '<button class="jaf-w-btn jaf-w-btn-optimize">Optimize</button>';
       row2.querySelector(".jaf-w-btn").addEventListener("click", function () {
-        chrome.runtime.sendMessage({ action: "requestOptimize" });
+        safeSendMessage({ action: "requestOptimize" });
         collapseToTab();
       });
       body.appendChild(row2);
@@ -321,7 +337,7 @@ window.JobAutofill = window.JobAutofill || {};
   // ---- Attach resume to file input ------------------------------------------
 
   function attachResumeToFileInput() {
-    chrome.runtime.sendMessage({ action: "getBaseResumePdf" }, function (resp) {
+    safeSendMessage({ action: "getBaseResumePdf" }, function (resp) {
       if (!resp || !resp.ok || !resp.pdf || !resp.pdf.dataBase64) {
         JA.log("WARN", "No base resume PDF configured for auto-attach.");
         return;

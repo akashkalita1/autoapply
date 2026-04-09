@@ -70,6 +70,22 @@ window.JobAutofill = window.JobAutofill || {};
     return found;
   }
 
+  function safeSendMessage(msg, callback) {
+    if (!chrome.runtime || !chrome.runtime.id) return;
+    try {
+      if (callback) {
+        chrome.runtime.sendMessage(msg, function (resp) {
+          if (chrome.runtime.lastError) return;
+          callback(resp);
+        });
+      } else {
+        chrome.runtime.sendMessage(msg);
+      }
+    } catch (e) {
+      // Extension context was invalidated
+    }
+  }
+
   /**
    * Main detection entry point.
    */
@@ -78,7 +94,7 @@ window.JobAutofill = window.JobAutofill || {};
     hasRun = true;
 
     // Check if profile exists before bothering
-    chrome.runtime.sendMessage({ action: "getProfile" }, function (resp) {
+    safeSendMessage({ action: "getProfile" }, function (resp) {
       if (!resp || !resp.ok || !resp.profile) return;
 
       var fields = [];
@@ -114,7 +130,7 @@ window.JobAutofill = window.JobAutofill || {};
       if (!hasOpportunity) return;
 
       // Notify background for badge
-      chrome.runtime.sendMessage({
+      safeSendMessage({
         action: "opportunityDetected",
         autofill: autofillOpportunity,
         optimize: optimizeOpportunity,
