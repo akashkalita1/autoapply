@@ -70,6 +70,8 @@
   let cachedJdAnalysis   = null;
   let cachedJdText       = null;
   let lastCoverLetterText= null;
+  let currentSettings    = null;
+  let currentActiveResume= null;
 
   // Tab ID of the job page that spawned this extension tab
   var originTabId = (function () {
@@ -93,6 +95,7 @@
 
   async function init() {
     const settings = await sendBg({ action: "getSettings" });
+    currentSettings = settings.ok ? settings : null;
     if (settings.ok && settings.profile) {
       renderProfile(settings.profile);
       btnPreview.disabled = false;
@@ -109,19 +112,8 @@
       }
     }
 
-    if (settings.ok) {
-      const llmReady = settings.llmEnabled && settings.apiKey;
-      llmStatusEl.textContent = llmReady ? "LLM: On" : "LLM: Off";
-      if (llmReady && settings.resume) {
-        btnAiOptimize.disabled = false;
-        btnAiOptimize.title = "Optimize resume & generate cover letter for this job";
-        btnCoverLetter.disabled = false;
-        btnCoverLetter.title = "Generate a cover letter for this job";
-      } else if (llmReady && !settings.resume) {
-        btnAiOptimize.title = "Upload resume JSON in Options to use AI features";
-        btnCoverLetter.title = "Upload resume JSON in Options to generate a cover letter";
-      }
-    }
+    await refreshActiveResumeContext();
+    updateAiAvailability();
 
     try {
       var tabId = await getOriginTabId();
@@ -140,6 +132,37 @@
     }
 
     await refreshJobContextAndDocs();
+  }
+
+  function updateAiAvailability() {
+    if (!currentSettings) return;
+    const llmReady = currentSettings.llmEnabled && currentSettings.apiKey;
+    const hasResumeForAi = !!(currentSettings.resumeAvailableForAi ||
+      (currentActiveResume && currentActiveResume.sourceType !== "profileOnly"));
+    llmStatusEl.textContent = llmReady ? "LLM: On" : "LLM: Off";
+    btnAiOptimize.disabled = !(llmReady && hasResumeForAi);
+    btnCoverLetter.disabled = !(llmReady && hasResumeForAi);
+    if (llmReady && hasResumeForAi) {
+      btnAiOptimize.title = "Optimize resume & generate cover letter for this job";
+      btnCoverLetter.title = "Generate a cover letter for this job";
+    } else if (llmReady) {
+      btnAiOptimize.title = "Add a resume PDF or resume JSON to use AI features";
+      btnCoverLetter.title = "Add a resume PDF or resume JSON to generate a cover letter";
+    }
+  }
+
+  async function refreshActiveResumeContext() {
+    const resp = await sendBg({ action: "getActiveResumeContext", jobKey: currentJobKey || "" });
+    currentActiveResume = resp.ok ? resp.activeResume : null;
+    return currentActiveResume;
+  }
+
+  async function getCurrentPersonalInfo() {
+    const active = await refreshActiveResumeContext();
+    if (active && active.personal) return active.personal;
+    const settings = currentSettings || await sendBg({ action: "getSettings" });
+    if (settings && settings.ok && settings.resume && settings.resume.personal) return settings.resume.personal;
+    return {};
   }
 
   // ---- Collapse / expand ----
@@ -282,8 +305,7 @@
       if (!text) { setDocsStatus("Paste cover letter text first.", false); return; }
       if (!currentJobKey) { setDocsStatus("No job detected for this tab yet.", false); return; }
       const JA = window.JobAutofill || {};
-      const settings = await sendBg({ action: "getSettings" });
-      const personal = (settings.ok && settings.resume && settings.resume.personal) ? settings.resume.personal : {};
+      const personal = await getCurrentPersonalInfo();
       const clHtml = JA.buildCoverLetterHtml
         ? JA.buildCoverLetterHtml(text, currentJobMeta, personal)
         : "<pre>" + escHtml(text) + "</pre>";
@@ -551,8 +573,7 @@
       // Auto-save to vault
       if (currentJobKey && result.coverLetterText) {
         var JA = window.JobAutofill || {};
-        var settings = await sendBg({ action: "getSettings" });
-        var personal = (settings.ok && settings.resume && settings.resume.personal) ? settings.resume.personal : {};
+        var personal = (result.activeResume && result.activeResume.personal) ? result.activeResume.personal : await getCurrentPersonalInfo();
         var clHtml = JA.buildCoverLetterHtml
           ? JA.buildCoverLetterHtml(result.coverLetterText, currentJobMeta, personal)
           : null;
@@ -582,8 +603,7 @@
       var text = standaloneCoverLetter ? standaloneCoverLetter.value : lastCoverLetterText;
       if (!text) return;
       var JA = window.JobAutofill || {};
-      var settings = await sendBg({ action: "getSettings" });
-      var personal = (settings.ok && settings.resume && settings.resume.personal) ? settings.resume.personal : {};
+      var personal = await getCurrentPersonalInfo();
       var clHtml = JA.buildCoverLetterHtml
         ? JA.buildCoverLetterHtml(text, currentJobMeta, personal)
         : "<pre>" + escHtml(text) + "</pre>";
@@ -905,8 +925,7 @@
 
   async function saveAndDownloadAiDocs(result) {
     var JA       = window.JobAutofill || {};
-    var settings = await sendBg({ action: "getSettings" });
-    var personal = (settings.ok && settings.resume && settings.resume.personal) ? settings.resume.personal : {};
+    var personal = (result.activeResume && result.activeResume.personal) ? result.activeResume.personal : await getCurrentPersonalInfo();
     var now      = new Date().toISOString();
 
     if (result.tailoredResume && JA.buildResumeHtml && JA.renderPdfFromHtml) {
@@ -1005,7 +1024,11 @@
   async function refreshJobContextAndDocs() {
     try {
       var tabId = await getOriginTabId();
-      if (!tabId) return;
+      if (!tabId) {
+        await refreshActiveResumeContext();
+        updateAiAvailability();
+        return;
+      }
       const resp = await chrome.tabs.sendMessage(tabId, { action: "getJobContext" });
       if (resp && resp.ok && resp.jobKey) {
         currentJobKey  = resp.jobKey;
@@ -1017,12 +1040,16 @@
         currentJobMeta = null;
         renderJobContextLine();
         renderDocsList(null);
+        await refreshActiveResumeContext();
+        updateAiAvailability();
       }
     } catch (e) {
       currentJobKey  = null;
       currentJobMeta = null;
       renderJobContextLine();
       renderDocsList(null);
+      await refreshActiveResumeContext();
+      updateAiAvailability();
     }
   }
 
@@ -1066,13 +1093,20 @@
   }
 
   async function refreshDocsList() {
-    if (!currentJobKey) { renderDocsList(null); return; }
+    if (!currentJobKey) {
+      await refreshActiveResumeContext();
+      updateAiAvailability();
+      renderDocsList(null);
+      return;
+    }
     var resp = await sendBg({ action: "getJobDocuments", jobKey: currentJobKey });
     if (!resp.ok) {
       setDocsStatus(resp.error || "Failed to load documents.", false);
       renderDocsList(null);
       return;
     }
+    currentActiveResume = resp.bucket ? resp.bucket.activeResume : currentActiveResume;
+    updateAiAvailability();
     setDocsStatus("", true);
     renderDocsList(resp.bucket);
   }
@@ -1091,6 +1125,11 @@
     var edited = Array.isArray(bucket.editedResumes) ? bucket.editedResumes : [];
     var covers = Array.isArray(bucket.coverLetters)  ? bucket.coverLetters  : [];
     var html   = "";
+
+    if (bucket.activeResume) {
+      html += '<div class="result-item"><span class="result-field">⭐ Active Resume</span><span class="result-value" title="' +
+        escHtml(bucket.activeResume.sourceName || "") + '">' + escHtml(truncate(bucket.activeResume.sourceName || "", 24)) + '</span></div>';
+    }
 
     if (edited.length > 0) {
       html += '<div class="result-item"><span class="result-field">📄 Resumes</span><span class="result-value">' + edited.length + '</span></div>';

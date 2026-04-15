@@ -25,6 +25,8 @@ window.JobAutofill = window.JobAutofill || {};
   var cachedJdAnalysis    = null;
   var cachedJdText        = null;
   var lastCoverLetterText = null;
+  var currentSettings     = null;
+  var currentActiveResume = null;
 
   var $ = {};
 
@@ -585,6 +587,7 @@ window.JobAutofill = window.JobAutofill || {};
 
   async function refreshSidebar() {
     var settings = await sendBg({ action: "getSettings" });
+    currentSettings = settings.ok ? settings : null;
 
     if (settings.ok && settings.profile) {
       renderProfile(settings.profile);
@@ -604,25 +607,40 @@ window.JobAutofill = window.JobAutofill || {};
       $.btnFill.disabled = true;
     }
 
-    if (settings.ok) {
-      var llmReady = settings.llmEnabled && settings.apiKey;
-      $.llmStatus.textContent = llmReady ? "LLM: On" : "LLM: Off";
-      if (llmReady && settings.resume) {
-        $.btnAiOptimize.disabled = false;
-        $.btnAiOptimize.title = "Optimize resume & generate cover letter for this job";
-        $.btnCoverLetter.disabled = false;
-        $.btnCoverLetter.title = "Generate a cover letter for this job";
-      } else {
-        $.btnAiOptimize.disabled = true;
-        $.btnCoverLetter.disabled = true;
-        if (llmReady && !settings.resume) {
-          $.btnAiOptimize.title = "Upload resume JSON in Options to use AI features";
-          $.btnCoverLetter.title = "Upload resume JSON in Options to generate a cover letter";
-        }
-      }
-    }
+    await refreshActiveResumeContext();
+    updateAiAvailability();
 
     await refreshJobContextAndDocs();
+  }
+
+  function updateAiAvailability() {
+    if (!currentSettings) return;
+    var llmReady = currentSettings.llmEnabled && currentSettings.apiKey;
+    var hasResumeForAi = !!(currentSettings.resumeAvailableForAi ||
+      (currentActiveResume && currentActiveResume.sourceType !== "profileOnly"));
+    $.llmStatus.textContent = llmReady ? "LLM: On" : "LLM: Off";
+    $.btnAiOptimize.disabled = !(llmReady && hasResumeForAi);
+    $.btnCoverLetter.disabled = !(llmReady && hasResumeForAi);
+    if (llmReady && hasResumeForAi) {
+      $.btnAiOptimize.title = "Optimize resume & generate cover letter for this job";
+      $.btnCoverLetter.title = "Generate a cover letter for this job";
+    } else if (llmReady) {
+      $.btnAiOptimize.title = "Add a resume PDF or resume JSON to use AI features";
+      $.btnCoverLetter.title = "Add a resume PDF or resume JSON to generate a cover letter";
+    }
+  }
+
+  async function refreshActiveResumeContext() {
+    var resp = await sendBg({ action: "getActiveResumeContext", jobKey: currentJobKey || "" });
+    currentActiveResume = resp.ok ? resp.activeResume : null;
+    return currentActiveResume;
+  }
+
+  async function getCurrentPersonalInfo() {
+    var active = await refreshActiveResumeContext();
+    if (active && active.personal) return active.personal;
+    if (currentSettings && currentSettings.resume && currentSettings.resume.personal) return currentSettings.resume.personal;
+    return {};
   }
 
   // ======== Event binding ========
@@ -750,8 +768,7 @@ window.JobAutofill = window.JobAutofill || {};
       var text = $.coverLetterText.value ? $.coverLetterText.value.trim() : "";
       if (!text) { setDocsStatus("Paste cover letter text first.", false); return; }
       if (!currentJobKey) { setDocsStatus("No job detected for this tab yet.", false); return; }
-      var settings = await sendBg({ action: "getSettings" });
-      var personal = (settings.ok && settings.resume && settings.resume.personal) ? settings.resume.personal : {};
+      var personal = await getCurrentPersonalInfo();
       var clHtml = JA.buildCoverLetterHtml
         ? JA.buildCoverLetterHtml(text, currentJobMeta, personal)
         : "<pre>" + escHtml(text) + "</pre>";
@@ -916,8 +933,7 @@ window.JobAutofill = window.JobAutofill || {};
       $.btnCoverLetter.disabled = false;
 
       if (currentJobKey && result.coverLetterText) {
-        var settings = await sendBg({ action: "getSettings" });
-        var personal = (settings.ok && settings.resume && settings.resume.personal) ? settings.resume.personal : {};
+        var personal = (result.activeResume && result.activeResume.personal) ? result.activeResume.personal : await getCurrentPersonalInfo();
         var clHtml = JA.buildCoverLetterHtml ? JA.buildCoverLetterHtml(result.coverLetterText, currentJobMeta, personal) : null;
         if (clHtml) {
           try {
@@ -938,8 +954,7 @@ window.JobAutofill = window.JobAutofill || {};
     $.btnDownloadCoverLetter.addEventListener("click", async function () {
       var text = $.standaloneCoverLetter ? $.standaloneCoverLetter.value : lastCoverLetterText;
       if (!text) return;
-      var settings = await sendBg({ action: "getSettings" });
-      var personal = (settings.ok && settings.resume && settings.resume.personal) ? settings.resume.personal : {};
+      var personal = await getCurrentPersonalInfo();
       var clHtml = JA.buildCoverLetterHtml
         ? JA.buildCoverLetterHtml(text, currentJobMeta, personal)
         : "<pre>" + escHtml(text) + "</pre>";
@@ -1038,9 +1053,16 @@ window.JobAutofill = window.JobAutofill || {};
   }
 
   async function refreshDocsList() {
-    if (!currentJobKey) { renderDocsList(null); return; }
+    if (!currentJobKey) {
+      await refreshActiveResumeContext();
+      updateAiAvailability();
+      renderDocsList(null);
+      return;
+    }
     var resp = await sendBg({ action: "getJobDocuments", jobKey: currentJobKey });
     if (!resp.ok) { setDocsStatus(resp.error || "Failed to load documents.", false); renderDocsList(null); return; }
+    currentActiveResume = resp.bucket ? resp.bucket.activeResume : currentActiveResume;
+    updateAiAvailability();
     setDocsStatus("", true);
     renderDocsList(resp.bucket);
   }
@@ -1058,6 +1080,10 @@ window.JobAutofill = window.JobAutofill || {};
     var edited = Array.isArray(bucket.editedResumes) ? bucket.editedResumes : [];
     var covers = Array.isArray(bucket.coverLetters)  ? bucket.coverLetters  : [];
     var html = "";
+    if (bucket.activeResume) {
+      html += '<div class="result-item"><span class="result-field">⭐ Active Resume</span><span class="result-value" title="' +
+        escHtml(bucket.activeResume.sourceName || "") + '">' + escHtml(truncate(bucket.activeResume.sourceName || "", 24)) + '</span></div>';
+    }
     if (edited.length > 0) {
       html += '<div class="result-item"><span class="result-field">\ud83d\udcc4 Resumes</span><span class="result-value">' + edited.length + '</span></div>';
       edited.forEach(function (d) { html += renderDocRow("editedResume", d); });
@@ -1134,6 +1160,8 @@ window.JobAutofill = window.JobAutofill || {};
       currentJobMeta = null;
       renderJobContextLine();
       renderDocsList(null);
+      await refreshActiveResumeContext();
+      updateAiAvailability();
     }
   }
 
@@ -1338,8 +1366,7 @@ window.JobAutofill = window.JobAutofill || {};
   // ======== AI doc save & download ========
 
   async function saveAndDownloadAiDocs(result) {
-    var settings = await sendBg({ action: "getSettings" });
-    var personal = (settings.ok && settings.resume && settings.resume.personal) ? settings.resume.personal : {};
+    var personal = (result.activeResume && result.activeResume.personal) ? result.activeResume.personal : await getCurrentPersonalInfo();
     var now = new Date().toISOString();
 
     if (result.tailoredResume && JA.buildResumeHtml && JA.renderPdfFromHtml) {

@@ -34,7 +34,11 @@ window.JobAutofill = window.JobAutofill || {};
 
     // Checkbox / radio: toggle the checked property
     if (type === "checkbox" || type === "radio") {
+      var normalizedValue = String(value).toLowerCase();
       var shouldCheck = value === true || value === "true" || value === "yes";
+      if (type === "radio" && value !== true && value !== false && value !== "true" && value !== "false") {
+        shouldCheck = String(element.value || "").toLowerCase() === normalizedValue;
+      }
       if (element.checked !== shouldCheck) {
         element.checked = shouldCheck;
         element.dispatchEvent(new Event("click", { bubbles: true }));

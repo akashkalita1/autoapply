@@ -27,11 +27,87 @@ const MODEL_PRICING = {
 const ARCHIVE_META_KEYS = {
   MIGRATION_V1: "migration_v1",
 };
+const DEFAULT_PROFILE = {
+  first_name: "",
+  last_name: "",
+  email: "",
+  phone: "",
+  address: {
+    street: "",
+    city: "",
+    state: "",
+    zip: "",
+    country: "United States",
+  },
+  linkedin: "",
+  github: "",
+  portfolio: "",
+  leetcode: "",
+  huggingface: "",
+  other_link_1_label: "",
+  other_link_1_url: "",
+  other_link_2_label: "",
+  other_link_2_url: "",
+  university: "",
+  degree: "",
+  gpa: "",
+  graduation_month: "",
+  graduation_year: "",
+  work_authorization: "",
+  require_sponsorship: false,
+  years_of_experience: "",
+  gender: "",
+  veteran_status: "",
+  military_status: "",
+  disability_status: "",
+};
+const DEFAULT_RESUME_SHAPE = {
+  personal: {},
+  education: [],
+  experience: [],
+  projects: [],
+  leadership: [],
+  skills: {
+    languages: [],
+    technologies: [],
+    concepts: [],
+  },
+  certifications: [],
+};
 
 // ---- API usage (OpenAI responses) ------------------------------------------
 
 function cloneJson(value) {
   return value ? JSON.parse(JSON.stringify(value)) : value;
+}
+
+function mergeObjects(base, extra) {
+  var out = cloneJson(base) || {};
+  var src = extra || {};
+  Object.keys(src).forEach(function (key) {
+    var value = src[key];
+    if (value && typeof value === "object" && !Array.isArray(value) && out[key] && typeof out[key] === "object" && !Array.isArray(out[key])) {
+      out[key] = mergeObjects(out[key], value);
+    } else {
+      out[key] = value;
+    }
+  });
+  return out;
+}
+
+function normalizeProfile(profile) {
+  var normalized = mergeObjects(DEFAULT_PROFILE, profile || {});
+  normalized.require_sponsorship = normalized.require_sponsorship === true || normalized.require_sponsorship === "true";
+  if (!normalized.address || typeof normalized.address !== "object") {
+    normalized.address = cloneJson(DEFAULT_PROFILE.address);
+  } else {
+    normalized.address = mergeObjects(DEFAULT_PROFILE.address, normalized.address);
+  }
+  return normalized;
+}
+
+function profileFullName(profile) {
+  return [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim();
 }
 
 function genId(prefix) {
@@ -195,6 +271,22 @@ function base64ToUtf8(b64) {
   return new TextDecoder("utf-8").decode(bytes);
 }
 
+function base64ToBytes(b64) {
+  const binary = atob(b64 || "");
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+function bytesToLatin1(bytes) {
+  var chunkSize = 0x8000;
+  var out = "";
+  for (var i = 0; i < bytes.length; i += chunkSize) {
+    out += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+  }
+  return out;
+}
+
 function utf8StringToBase64(str) {
   return btoa(unescape(encodeURIComponent(str)));
 }
@@ -278,7 +370,7 @@ function coverLetterDocToFileData(doc) {
 
 async function getProfile() {
   const result = await chrome.storage.local.get(STORAGE_KEYS.PROFILE);
-  return result[STORAGE_KEYS.PROFILE] || null;
+  return result[STORAGE_KEYS.PROFILE] ? normalizeProfile(result[STORAGE_KEYS.PROFILE]) : null;
 }
 
 async function getResume() {
@@ -295,6 +387,69 @@ async function saveBaseResumePdf(pdf) {
   await chrome.storage.local.set({ [STORAGE_KEYS.BASE_RESUME_PDF]: pdf });
 }
 
+async function sha256HexForBase64(dataBase64) {
+  var digest = await self.crypto.subtle.digest("SHA-256", base64ToBytes(dataBase64));
+  var bytes = new Uint8Array(digest);
+  return Array.from(bytes).map(function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+}
+
+function normalizeResumeShape(resume) {
+  var out = mergeObjects(DEFAULT_RESUME_SHAPE, resume || {});
+  ["education", "experience", "projects", "leadership", "certifications"].forEach(function (key) {
+    if (!Array.isArray(out[key])) out[key] = [];
+  });
+  if (!out.skills || typeof out.skills !== "object") out.skills = cloneJson(DEFAULT_RESUME_SHAPE.skills);
+  ["languages", "technologies", "concepts"].forEach(function (key) {
+    if (!Array.isArray(out.skills[key])) out.skills[key] = [];
+  });
+  if (!out.personal || typeof out.personal !== "object") out.personal = {};
+  return out;
+}
+
+function mergeProfileIntoResume(resume, profile) {
+  var normalizedProfile = normalizeProfile(profile);
+  var next = normalizeResumeShape(resume || {});
+  var personal = mergeObjects({}, next.personal || {});
+  var fullName = profileFullName(normalizedProfile);
+  if (!personal.name && fullName) personal.name = fullName;
+  if (!personal.email && normalizedProfile.email) personal.email = normalizedProfile.email;
+  if (!personal.phone && normalizedProfile.phone) personal.phone = normalizedProfile.phone;
+  if (!personal.linkedin && normalizedProfile.linkedin) personal.linkedin = normalizedProfile.linkedin;
+  if (!personal.github && normalizedProfile.github) personal.github = normalizedProfile.github;
+  if (!personal.location) {
+    personal.location = [normalizedProfile.address.city, normalizedProfile.address.state].filter(Boolean).join(", ");
+  }
+  next.personal = personal;
+  return next;
+}
+
+function sanitizeIdPart(text, fallback) {
+  return String(text || fallback || "item").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || String(fallback || "item");
+}
+
+function ensureResumeIds(resume) {
+  var next = normalizeResumeShape(resume || {});
+  ["education", "experience", "projects", "leadership", "certifications"].forEach(function (sectionKey) {
+    next[sectionKey] = (next[sectionKey] || []).map(function (item, index) {
+      var cloned = cloneJson(item) || {};
+      if (!cloned.id) {
+        var basis = cloned.name || cloned.title || cloned.role || cloned.institution || (sectionKey + "_" + (index + 1));
+        cloned.id = sectionKey + "_" + sanitizeIdPart(basis, String(index + 1));
+      }
+      if (Array.isArray(cloned.bullets)) {
+        cloned.bullets = cloned.bullets.map(function (bullet, bulletIndex) {
+          var nextBullet = typeof bullet === "string" ? { text: bullet } : (cloneJson(bullet) || {});
+          if (!nextBullet.id) nextBullet.id = cloned.id + "_bullet_" + (bulletIndex + 1);
+          nextBullet.text = String(nextBullet.text || "").trim();
+          return nextBullet;
+        }).filter(function (bullet) { return bullet.text; });
+      }
+      return cloned;
+    });
+  });
+  return next;
+}
+
 function sortNewestFirst(a, b) {
   return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
 }
@@ -303,12 +458,15 @@ async function getJobDocumentBucket(jobKey) {
   await ensureArchiveReady();
   const job = await ArchiveDB.getJob(jobKey);
   const docs = await ArchiveDB.listDocumentsByJob(jobKey);
+  const basePdf = await getBaseResumePdf();
+  const storedResume = await getResume();
   const bucket = {
     jobKey: jobKey,
     jobMeta: job && job.jobMeta ? job.jobMeta : null,
     editedResumes: [],
     coverLetters: [],
     updatedAt: (job && job.updatedAt) || null,
+    activeResume: null,
   };
 
   for (const doc of docs) {
@@ -317,7 +475,23 @@ async function getJobDocumentBucket(jobKey) {
   }
   bucket.editedResumes.sort(sortNewestFirst);
   bucket.coverLetters.sort(sortNewestFirst);
-  return (bucket.editedResumes.length || bucket.coverLetters.length || bucket.jobMeta) ? bucket : null;
+  if (bucket.editedResumes.length > 0) {
+    bucket.activeResume = {
+      sourceType: "jobResumePdf",
+      sourceName: bucket.editedResumes[0].name || "Active job resume",
+    };
+  } else if (basePdf && basePdf.dataBase64) {
+    bucket.activeResume = {
+      sourceType: "baseResumePdf",
+      sourceName: basePdf.name || "Base resume PDF",
+    };
+  } else if (storedResume) {
+    bucket.activeResume = {
+      sourceType: "optionsResumeJson",
+      sourceName: "Resume JSON from Options",
+    };
+  }
+  return (bucket.editedResumes.length || bucket.coverLetters.length || bucket.jobMeta || bucket.activeResume) ? bucket : null;
 }
 
 async function listAllArchivedJobs() {
@@ -385,6 +559,127 @@ async function listDocumentArchive(filters) {
       ].join(" ").toLowerCase();
       return haystack.indexOf(normalized.query) !== -1;
     });
+}
+
+async function inflatePdfBytes(bytes) {
+  if (typeof DecompressionStream !== "function") return null;
+  try {
+    var ds = new DecompressionStream("deflate");
+    var stream = new Blob([bytes]).stream().pipeThrough(ds);
+    var buffer = await new Response(stream).arrayBuffer();
+    return new Uint8Array(buffer);
+  } catch (err) {
+    return null;
+  }
+}
+
+function decodePdfEscapes(text) {
+  return String(text || "")
+    .replace(/\\([()\\])/g, "$1")
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\r")
+    .replace(/\\t/g, "\t")
+    .replace(/\\b/g, "\b")
+    .replace(/\\f/g, "\f")
+    .replace(/\\([0-7]{1,3})/g, function (_, octal) {
+      return String.fromCharCode(parseInt(octal, 8));
+    });
+}
+
+function extractPdfStrings(content) {
+  var results = [];
+  var text = String(content || "");
+  var re = /\((?:\\.|[^\\()])*\)\s*(?:Tj|TJ|'|")/g;
+  var match;
+  while ((match = re.exec(text))) {
+    var token = match[0];
+    var start = token.indexOf("(");
+    var end = token.lastIndexOf(")");
+    if (start < 0 || end <= start) continue;
+    results.push(decodePdfEscapes(token.slice(start + 1, end)));
+  }
+
+  var arrayRe = /\[(.*?)\]\s*TJ/gs;
+  while ((match = arrayRe.exec(text))) {
+    var inner = match[1] || "";
+    var stringRe = /\((?:\\.|[^\\()])*\)/g;
+    var strMatch;
+    while ((strMatch = stringRe.exec(inner))) {
+      results.push(decodePdfEscapes(strMatch[0].slice(1, -1)));
+    }
+  }
+
+  return results;
+}
+
+async function extractPdfTextFromBase64(dataBase64) {
+  var bytes = base64ToBytes(dataBase64);
+  var binary = bytesToLatin1(bytes);
+  var pieces = extractPdfStrings(binary);
+  var streamRe = /<<(.*?)>>\s*stream\r?\n/gs;
+  var match;
+
+  while ((match = streamRe.exec(binary))) {
+    var dictText = match[1] || "";
+    var streamStart = match.index + match[0].length;
+    var endIndex = binary.indexOf("endstream", streamStart);
+    if (endIndex < 0) continue;
+    var streamBytes = bytes.slice(streamStart, endIndex);
+    if (streamBytes[0] === 0x0d && streamBytes[1] === 0x0a) streamBytes = streamBytes.slice(2);
+    else if (streamBytes[0] === 0x0a) streamBytes = streamBytes.slice(1);
+    if (streamBytes.length > 1 && streamBytes[streamBytes.length - 2] === 0x0d && streamBytes[streamBytes.length - 1] === 0x0a) {
+      streamBytes = streamBytes.slice(0, -2);
+    } else if (streamBytes.length > 0 && streamBytes[streamBytes.length - 1] === 0x0a) {
+      streamBytes = streamBytes.slice(0, -1);
+    }
+
+    var decodedBytes = streamBytes;
+    if (/FlateDecode/.test(dictText)) {
+      var inflated = await inflatePdfBytes(streamBytes);
+      if (inflated && inflated.length) decodedBytes = inflated;
+    }
+    pieces = pieces.concat(extractPdfStrings(bytesToLatin1(decodedBytes)));
+  }
+
+  return pieces
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .replace(/[^\x09\x0a\x0d\x20-\x7e]/g, " ")
+    .trim();
+}
+
+function buildResumeSkeletonFromProfile(profile) {
+  var normalizedProfile = normalizeProfile(profile);
+  var fullName = profileFullName(normalizedProfile);
+  return normalizeResumeShape({
+    personal: {
+      name: fullName,
+      email: normalizedProfile.email || "",
+      phone: normalizedProfile.phone || "",
+      linkedin: normalizedProfile.linkedin || "",
+      github: normalizedProfile.github || "",
+      location: [normalizedProfile.address.city, normalizedProfile.address.state].filter(Boolean).join(", "),
+    },
+    education: normalizedProfile.university || normalizedProfile.degree ? [{
+      institution: normalizedProfile.university || "",
+      degree: normalizedProfile.degree || "",
+      expected: [normalizedProfile.graduation_month, normalizedProfile.graduation_year].filter(Boolean).join(" "),
+      gpa: normalizedProfile.gpa || "",
+      coursework: [],
+      awards: [],
+    }] : [],
+  });
+}
+
+async function getCachedParsedResume(fingerprint) {
+  await ensureArchiveReady();
+  var cached = await ArchiveDB.getResumeParseCache(fingerprint);
+  return cached && cached.resume ? cached : null;
+}
+
+async function saveParsedResumeCache(entry) {
+  await ensureArchiveReady();
+  await ArchiveDB.setResumeParseCache(entry);
 }
 
 async function getApiUsageDashboard() {
@@ -579,6 +874,36 @@ const JD_ANALYSIS_REQUIRED_KEYS = [
   "keywords", "tone", "domain", "notes",
 ];
 
+const RESUME_PARSE_PROMPT =
+  "ROLE: You are a precise resume parser.\n\n" +
+  "TASK: Convert resume text extracted from a PDF into the extension's normalized resume JSON.\n\n" +
+  "OUTPUT FORMAT:\n" +
+  "Return ONLY valid JSON with these exact top-level keys:\n" +
+  '{ "personal": object, "education": array, "experience": array, "projects": array, "leadership": array, "skills": { "languages": array, "technologies": array, "concepts": array }, "certifications": array }\n\n' +
+  "RULES:\n" +
+  "- Use ONLY information present in the provided resume text or profile context.\n" +
+  "- Never invent employers, dates, metrics, links, projects, or credentials.\n" +
+  "- Keep unknown values as empty strings or empty arrays.\n" +
+  "- For bullet-based sections, output arrays of objects with a text field for each bullet.\n" +
+  "- Keep section arrays empty when the section does not exist.\n" +
+  "- For personal, include name/email/phone/linkedin/github/location only when present.\n" +
+  "- For education entries, include institution, degree, expected, gpa, coursework, awards.\n" +
+  "- For experience entries, include company, title, location, start, end, headline, bullets.\n" +
+  "- For project entries, include name, tech, bullets.\n" +
+  "- For leadership entries, include organization, role, location, start, end, bullets.\n" +
+  "- For certifications, include name when present.\n\n" +
+  "IMPORTANT: Return ONLY valid JSON with the required top-level keys and no markdown fences.";
+
+const RESUME_PARSE_REQUIRED_KEYS = [
+  "personal",
+  "education",
+  "experience",
+  "projects",
+  "leadership",
+  "skills",
+  "certifications",
+];
+
 const RESUME_TAILOR_PROMPT =
   "ROLE: You are an expert resume writer and ATS optimization specialist.\n\n" +
   "TASK: Produce a tailored version of the resume JSON that maximizes ATS match rate for the given job description analysis.\n\n" +
@@ -733,6 +1058,34 @@ async function analyzeJd(jdText, apiKey, jobKey) {
   });
 }
 
+async function parseResumeTextWithOpenAi(resumeText, profile, apiKey, jobKey) {
+  var normalizedProfile = normalizeProfile(profile);
+  var userContent =
+    "PROFILE CONTEXT:\n" + JSON.stringify({
+      full_name: profileFullName(normalizedProfile),
+      email: normalizedProfile.email,
+      phone: normalizedProfile.phone,
+      linkedin: normalizedProfile.linkedin,
+      github: normalizedProfile.github,
+      location: [normalizedProfile.address.city, normalizedProfile.address.state].filter(Boolean).join(", "),
+    }, null, 2) + "\n\n" +
+    "RESUME TEXT:\n" + resumeText;
+
+  var parsed = await callOpenAi({
+    systemPrompt: RESUME_PARSE_PROMPT,
+    userContent: userContent,
+    apiKey: apiKey,
+    expectJson: true,
+    requiredKeys: RESUME_PARSE_REQUIRED_KEYS,
+    temperature: 0.1,
+    operation: "resumeParse",
+    model: DEFAULT_OPENAI_MODEL,
+    jobKey: jobKey || "",
+  });
+
+  return ensureResumeIds(mergeProfileIntoResume(parsed, normalizedProfile));
+}
+
 // ---- LLM-powered qualification gap check ------------------------------------
 
 const REQUIREMENTS_GAP_PROMPT =
@@ -883,6 +1236,106 @@ function computeResumeDiff(original, tailored) {
   return diff;
 }
 
+async function resolveActiveResumeContext(jobKey, options) {
+  var opts = options || {};
+  var profile = normalizeProfile(opts.profile || await getProfile());
+  var storedResume = opts.storedResume || await getResume();
+  var sourceType = storedResume ? "optionsResumeJson" : "profileOnly";
+  var sourceName = storedResume ? "Resume JSON from Options" : "Profile fallback";
+  var sourceDoc = null;
+
+  if (jobKey) {
+    var bucket = await getJobDocumentBucket(jobKey);
+    var edited = bucket && Array.isArray(bucket.editedResumes) ? bucket.editedResumes : [];
+    if (edited.length > 0) {
+      sourceDoc = edited[0];
+      sourceType = "jobResumePdf";
+      sourceName = sourceDoc.name || "Active job resume";
+    }
+  }
+
+  if (!sourceDoc) {
+    var basePdf = await getBaseResumePdf();
+    if (basePdf && basePdf.dataBase64) {
+      sourceDoc = basePdf;
+      sourceType = "baseResumePdf";
+      sourceName = basePdf.name || "Base resume PDF";
+    }
+  }
+
+  var uploadFile = sourceDoc ? {
+    dataBase64: sourceDoc.dataBase64,
+    name: sourceDoc.name || "resume.pdf",
+    mime: sourceDoc.mime || "application/pdf",
+    id: sourceDoc.id || "",
+    createdAt: sourceDoc.createdAt || null,
+  } : null;
+
+  var structuredResume = storedResume ? ensureResumeIds(mergeProfileIntoResume(storedResume, profile)) : null;
+  var fallbackResume = structuredResume;
+  var parseMeta = {
+    attempted: false,
+    ok: false,
+    cached: false,
+    fallbackUsed: !structuredResume,
+    fingerprint: "",
+    sourceType: sourceType,
+    sourceName: sourceName,
+  };
+
+  if (sourceDoc && sourceDoc.dataBase64 && opts.allowParse !== false && opts.apiKey) {
+    parseMeta.attempted = true;
+    try {
+      var fingerprint = await sha256HexForBase64(sourceDoc.dataBase64);
+      parseMeta.fingerprint = fingerprint;
+      var cached = await getCachedParsedResume(fingerprint);
+      if (cached && cached.resume) {
+        structuredResume = ensureResumeIds(mergeProfileIntoResume(cached.resume, profile));
+        parseMeta.ok = true;
+        parseMeta.cached = true;
+        parseMeta.fallbackUsed = false;
+      } else {
+        var resumeText = await extractPdfTextFromBase64(sourceDoc.dataBase64);
+        if (resumeText && resumeText.length >= 80) {
+          var parsedResume = await parseResumeTextWithOpenAi(resumeText, profile, opts.apiKey, jobKey);
+          structuredResume = parsedResume;
+          parseMeta.ok = true;
+          parseMeta.fallbackUsed = false;
+          await saveParsedResumeCache({
+            fingerprint: fingerprint,
+            sourceType: sourceType,
+            sourceName: sourceName,
+            updatedAt: new Date().toISOString(),
+            resume: parsedResume,
+          });
+        }
+      }
+    } catch (err) {
+      parseMeta.error = err && err.message ? err.message : String(err);
+    }
+  }
+
+  if (sourceDoc && !parseMeta.ok && fallbackResume) {
+    structuredResume = fallbackResume;
+    parseMeta.fallbackUsed = true;
+  }
+
+  if (!structuredResume) {
+    structuredResume = ensureResumeIds(buildResumeSkeletonFromProfile(profile));
+    parseMeta.fallbackUsed = true;
+  }
+
+  return {
+    sourceType: sourceType,
+    sourceName: sourceName,
+    hasUploadFile: !!uploadFile,
+    uploadFile: uploadFile,
+    structuredResume: structuredResume,
+    personal: (structuredResume && structuredResume.personal) ? structuredResume.personal : {},
+    parseMeta: parseMeta,
+  };
+}
+
 async function handleGenerateAiDocuments(msg) {
   const apiKey = await getApiKey();
   if (!apiKey) {
@@ -893,9 +1346,16 @@ async function handleGenerateAiDocuments(msg) {
     return { ok: false, error: "LLM is disabled. Enable it in Options." };
   }
 
-  const resume = await getResume();
+  const profile = await getProfile();
+  const activeResume = await resolveActiveResumeContext(msg.jobKey, {
+    profile: profile,
+    storedResume: await getResume(),
+    apiKey: apiKey,
+    allowParse: true,
+  });
+  const resume = activeResume.structuredResume;
   if (!resume) {
-    return { ok: false, error: "No resume JSON configured. Upload it in Options." };
+    return { ok: false, error: "No resume data available. Upload a resume in Options or Documents." };
   }
 
   const jdText = msg.jdText;
@@ -925,6 +1385,12 @@ async function handleGenerateAiDocuments(msg) {
     jdAnalysis,
     requirementsGaps,
     diff,
+    activeResume: {
+      sourceType: activeResume.sourceType,
+      sourceName: activeResume.sourceName,
+      parseMeta: activeResume.parseMeta,
+      personal: activeResume.personal,
+    },
   };
 }
 
@@ -988,35 +1454,59 @@ function debuggerSend(target, method, params) {
   });
 }
 
+async function waitForPdfReady(target) {
+  for (var i = 0; i < 40; i++) {
+    var result = await debuggerSend(target, "Runtime.evaluate", {
+      expression:
+        "(async function () {" +
+        "if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (e) {} }" +
+        "var body = document.body || { innerText: '', innerHTML: '' };" +
+        "return {" +
+        "readyState: document.readyState || ''," +
+        "textLength: String(body.innerText || '').trim().length," +
+        "htmlLength: String(body.innerHTML || '').trim().length" +
+        "};" +
+        "})()",
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    var value = result && result.result ? result.result.value : null;
+    if (value && value.readyState === "complete" && value.htmlLength > 100 && value.textLength > 20) {
+      return value;
+    }
+    await delay(100);
+  }
+  throw new Error("PDF render content did not become ready");
+}
+
 async function renderHtmlToPdf(msg) {
   if (!msg.html) return { ok: false, error: "Missing HTML payload" };
 
-  var renderId = genId("render");
-  var sessionKey = "jaf_pdf_render_" + renderId;
   var target = null;
   var tab = null;
 
   try {
-    await chrome.storage.session.set({
-      [sessionKey]: {
-        html: String(msg.html),
-        createdAt: new Date().toISOString(),
-      },
-    });
-
     tab = await chrome.tabs.create({
-      url: chrome.runtime.getURL("pdf/render.html?renderId=" + encodeURIComponent(renderId)),
+      url: "about:blank",
       active: false,
     });
     target = { tabId: tab.id };
 
     await waitForTabComplete(tab.id);
-    await delay(250);
 
     await chrome.debugger.attach(target, "1.3");
     try {
       await debuggerSend(target, "Page.enable");
+      await debuggerSend(target, "Runtime.enable");
       await debuggerSend(target, "Emulation.setEmulatedMedia", { media: "print" });
+      var frameTree = await debuggerSend(target, "Page.getFrameTree");
+      var frameId = frameTree && frameTree.frameTree && frameTree.frameTree.frame ? frameTree.frameTree.frame.id : null;
+      if (!frameId) throw new Error("Could not determine render frame");
+      await debuggerSend(target, "Page.setDocumentContent", {
+        frameId: frameId,
+        html: String(msg.html),
+      });
+      await waitForPdfReady(target);
       var pdfResult = await debuggerSend(target, "Page.printToPDF", {
         printBackground: true,
         preferCSSPageSize: true,
@@ -1042,7 +1532,6 @@ async function renderHtmlToPdf(msg) {
     if (tab && tab.id) {
       try { await chrome.tabs.remove(tab.id); } catch (closeErr) {}
     }
-    try { await chrome.storage.session.remove(sessionKey); } catch (removeErr) {}
   }
 }
 
@@ -1063,19 +1552,20 @@ async function handleMessage(msg, sender) {
       return { ok: true, profile: await getProfile() };
 
     case "saveProfile":
-      await chrome.storage.local.set({ [STORAGE_KEYS.PROFILE]: msg.profile });
+      await chrome.storage.local.set({ [STORAGE_KEYS.PROFILE]: normalizeProfile(msg.profile) });
       return { ok: true };
 
     case "saveResume":
-      await chrome.storage.local.set({ [STORAGE_KEYS.RESUME]: msg.resume });
+      await chrome.storage.local.set({ [STORAGE_KEYS.RESUME]: ensureResumeIds(msg.resume) });
       return { ok: true };
 
-    case "getSettings":
+    case "getSettings": {
       const basePdf = await getBaseResumePdf();
+      const storedResume = await getResume();
       return {
         ok: true,
         profile: await getProfile(),
-        resume: await getResume(),
+        resume: storedResume,
         baseResumePdfMeta: basePdf
           ? {
               id: basePdf.id,
@@ -1085,10 +1575,12 @@ async function handleMessage(msg, sender) {
               createdAt: basePdf.createdAt,
             }
           : null,
+        resumeAvailableForAi: !!(storedResume || basePdf),
         apiKey: await getApiKey(),
         llmEnabled: await isLlmEnabled(),
         styleProfile: await getStyleProfile(),
       };
+    }
 
     case "getApiUsage": {
       await ensureArchiveReady();
@@ -1126,6 +1618,27 @@ async function handleMessage(msg, sender) {
     case "getJobDocuments":
       if (!msg.jobKey) return { ok: false, error: "Missing jobKey" };
       return { ok: true, bucket: await getJobDocumentBucket(msg.jobKey) };
+
+    case "getActiveResumeContext": {
+      const apiKey = await getApiKey();
+      const llmEnabled = await isLlmEnabled();
+      const activeResume = await resolveActiveResumeContext(msg.jobKey || "", {
+        profile: await getProfile(),
+        storedResume: await getResume(),
+        apiKey: llmEnabled && apiKey ? apiKey : "",
+        allowParse: llmEnabled && !!apiKey,
+      });
+      return {
+        ok: true,
+        activeResume: {
+          sourceType: activeResume.sourceType,
+          sourceName: activeResume.sourceName,
+          hasUploadFile: activeResume.hasUploadFile,
+          personal: activeResume.personal,
+          parseMeta: activeResume.parseMeta,
+        },
+      };
+    }
 
     case "listAllJobs":
       return { ok: true, jobs: await listAllArchivedJobs() };
@@ -1223,7 +1736,6 @@ async function handleAutofill(msg, sender) {
   if (!profile) {
     return { ok: false, error: "No profile configured. Open the Options page to set up your profile." };
   }
-  const resume = await getResume();
 
   const mode = msg.mode || "preview"; // "preview" or "fill"
 
@@ -1264,13 +1776,20 @@ async function handleAutofill(msg, sender) {
     repeatSectionHints,
     navButton: scanResult.navButton || null,
   };
+  const llmEnabled = await isLlmEnabled();
+  const apiKey = await getApiKey();
+  const activeResume = await resolveActiveResumeContext(jobKey, {
+    profile: profile,
+    storedResume: await getResume(),
+    apiKey: llmEnabled && apiKey ? apiKey : "",
+    allowParse: llmEnabled && !!apiKey,
+  });
+  const resume = activeResume.structuredResume;
 
   // 3. Rule-based matching (shared module loaded via importScripts)
   let mappings = MatchRules.ruleBasedMatch(fields, profile);
 
   // 4. Optional LLM fallback for unmatched fields
-  const llmEnabled = await isLlmEnabled();
-  const apiKey = await getApiKey();
   if (llmEnabled && apiKey) {
     const unmatched = fields.filter((f) => {
       const m = mappings.find((mm) => mm.selector === f.selector);
@@ -1302,7 +1821,7 @@ async function handleAutofill(msg, sender) {
   const RESUME_FILE_RE = /resume|cv|curriculum/i;
   const COVER_LETTER_FILE_RE = /cover\s*letter|letter\s*of|motivation|supporting\s*document/i;
 
-  const resumePdf = await resolveResumePdfForJob(jobKey);
+  const resumePdf = activeResume.uploadFile || await resolveResumePdfForJob(jobKey);
   const coverDoc = await newestCoverLetterDocForJob(jobKey);
   const coverFileData = coverDoc ? coverLetterDocToFileData(coverDoc) : null;
 
@@ -1364,6 +1883,11 @@ async function handleAutofill(msg, sender) {
       fieldCount: fields.length,
       jobKey,
       jobMeta,
+      activeResume: {
+        sourceType: activeResume.sourceType,
+        sourceName: activeResume.sourceName,
+        parseMeta: activeResume.parseMeta,
+      },
     };
   }
 
@@ -1377,6 +1901,11 @@ async function handleAutofill(msg, sender) {
     formLayout,
     repeatSectionHints,
     fieldCount: fields.length,
+    activeResume: {
+      sourceType: activeResume.sourceType,
+      sourceName: activeResume.sourceName,
+      parseMeta: activeResume.parseMeta,
+    },
   };
 }
 
@@ -1467,8 +1996,15 @@ async function handleAnalyzeResumeGaps(msg) {
   if (!apiKey) return { ok: false, error: "No OpenAI API key configured. Set it in Options." };
   const llmOn = await isLlmEnabled();
   if (!llmOn) return { ok: false, error: "LLM is disabled. Enable it in Options." };
-  const resume = await getResume();
-  if (!resume) return { ok: false, error: "No resume JSON configured. Upload it in Options." };
+  const profile = await getProfile();
+  const activeResume = await resolveActiveResumeContext(msg.jobKey, {
+    profile: profile,
+    storedResume: await getResume(),
+    apiKey: apiKey,
+    allowParse: true,
+  });
+  const resume = activeResume.structuredResume;
+  if (!resume) return { ok: false, error: "No resume data available. Add a resume in Options or Documents." };
 
   const jdText = msg.jdText;
   if (!jdText || jdText.trim().length < 30) {
@@ -1558,14 +2094,26 @@ async function handleAnalyzeResumeGaps(msg) {
     missingKeywords: missingKeywords,
     matchedKeywords: matchedKeywords,
     gapDetails: qualResults.concat(skillResults).concat(kwResults),
+    activeResume: {
+      sourceType: activeResume.sourceType,
+      sourceName: activeResume.sourceName,
+      parseMeta: activeResume.parseMeta,
+    },
   };
 }
 
 async function handleExecuteResumeOptimization(msg) {
   const apiKey = await getApiKey();
   if (!apiKey) return { ok: false, error: "No OpenAI API key configured." };
-  const resume = await getResume();
-  if (!resume) return { ok: false, error: "No resume JSON configured." };
+  const profile = await getProfile();
+  const activeResume = await resolveActiveResumeContext(msg.jobKey, {
+    profile: profile,
+    storedResume: await getResume(),
+    apiKey: apiKey,
+    allowParse: true,
+  });
+  const resume = activeResume.structuredResume;
+  if (!resume) return { ok: false, error: "No resume data available." };
 
   const jdAnalysis = msg.jdAnalysis;
   if (!jdAnalysis) return { ok: false, error: "Missing JD analysis from Phase 1." };
@@ -1594,6 +2142,12 @@ async function handleExecuteResumeOptimization(msg) {
     jdAnalysis: jdAnalysis,
     requirementsGaps: requirementsGaps,
     diff: diff,
+    activeResume: {
+      sourceType: activeResume.sourceType,
+      sourceName: activeResume.sourceName,
+      parseMeta: activeResume.parseMeta,
+      personal: activeResume.personal,
+    },
   };
 }
 
@@ -1604,8 +2158,15 @@ async function handleGenerateCoverLetter(msg) {
   if (!apiKey) return { ok: false, error: "No OpenAI API key configured. Set it in Options." };
   const llmOn = await isLlmEnabled();
   if (!llmOn) return { ok: false, error: "LLM is disabled. Enable it in Options." };
-  const resume = await getResume();
-  if (!resume) return { ok: false, error: "No resume JSON configured. Upload it in Options." };
+  const profile = await getProfile();
+  const activeResume = await resolveActiveResumeContext(msg.jobKey, {
+    profile: profile,
+    storedResume: await getResume(),
+    apiKey: apiKey,
+    allowParse: true,
+  });
+  const resume = activeResume.structuredResume;
+  if (!resume) return { ok: false, error: "No resume data available. Upload a resume in Options or Documents." };
 
   const jdText = msg.jdText;
   if (!jdText || jdText.trim().length < 30) {
@@ -1627,7 +2188,17 @@ async function handleGenerateCoverLetter(msg) {
     return { ok: false, error: "Cover letter generation failed: " + (err.message || String(err)) };
   }
 
-  return { ok: true, coverLetterText, jdAnalysis };
+  return {
+    ok: true,
+    coverLetterText,
+    jdAnalysis,
+    activeResume: {
+      sourceType: activeResume.sourceType,
+      sourceName: activeResume.sourceName,
+      parseMeta: activeResume.parseMeta,
+      personal: activeResume.personal,
+    },
+  };
 }
 
 // Log extension startup

@@ -7,18 +7,55 @@
   const JA = window.JobAutofill || {};
   const FLAT_FIELDS = [
     "first_name", "last_name", "email", "phone",
-    "linkedin", "github", "portfolio",
+    "linkedin", "github", "portfolio", "leetcode", "huggingface",
+    "other_link_1_label", "other_link_1_url", "other_link_2_label", "other_link_2_url",
     "university", "degree", "gpa",
     "graduation_month", "graduation_year",
     "work_authorization", "years_of_experience",
+    "gender", "veteran_status", "military_status", "disability_status",
   ];
   const ADDRESS_FIELDS = ["street", "city", "state", "zip", "country"];
+  const PROFILE_DEFAULTS = {
+    first_name: "",
+    last_name: "",
+    email: "",
+    phone: "",
+    linkedin: "",
+    github: "",
+    portfolio: "",
+    leetcode: "",
+    huggingface: "",
+    other_link_1_label: "",
+    other_link_1_url: "",
+    other_link_2_label: "",
+    other_link_2_url: "",
+    university: "",
+    degree: "",
+    gpa: "",
+    graduation_month: "",
+    graduation_year: "",
+    work_authorization: "",
+    require_sponsorship: false,
+    years_of_experience: "",
+    gender: "",
+    veteran_status: "",
+    military_status: "",
+    disability_status: "",
+    address: {
+      street: "",
+      city: "",
+      state: "",
+      zip: "",
+      country: "United States",
+    },
+  };
   const OPERATION_COLORS = {
     fieldMap: "#6366f1",
     jdAnalysis: "#0ea5e9",
     gapCheck: "#f59e0b",
     tailorResume: "#8b5cf6",
     coverLetter: "#10b981",
+    resumeParse: "#ec4899",
   };
   const state = {
     archiveItems: [],
@@ -76,7 +113,7 @@
         return;
       }
       try {
-        const data = JSON.parse(text);
+        const data = normalizeProfile(JSON.parse(text));
         if (!data.first_name && !data.email && !data.last_name) {
           showStatus("importStatus", "JSON doesn't look like an applicant profile.", false);
           return;
@@ -425,6 +462,7 @@
   }
 
   function populateForm(profile) {
+    profile = normalizeProfile(profile);
     for (const key of FLAT_FIELDS) {
       const el = document.getElementById(key);
       if (el && profile[key] !== undefined) {
@@ -442,7 +480,7 @@
   }
 
   function readForm() {
-    const profile = {};
+    const profile = normalizeProfile({});
     for (const key of FLAT_FIELDS) {
       const el = document.getElementById(key);
       profile[key] = el ? el.value.trim() : "";
@@ -454,6 +492,22 @@
     }
     profile.require_sponsorship = document.getElementById("require_sponsorship").value === "true";
     return profile;
+  }
+
+  function normalizeProfile(profile) {
+    const next = JSON.parse(JSON.stringify(PROFILE_DEFAULTS));
+    const src = profile || {};
+    Object.keys(src).forEach((key) => {
+      if (key === "address" && src.address && typeof src.address === "object") {
+        Object.keys(src.address).forEach((addrKey) => {
+          next.address[addrKey] = src.address[addrKey];
+        });
+      } else {
+        next[key] = src[key];
+      }
+    });
+    next.require_sponsorship = next.require_sponsorship === true || next.require_sponsorship === "true";
+    return next;
   }
 
   function renderBaseResumePdfMeta(meta) {

@@ -5,7 +5,7 @@
 
 self.ArchiveDB = (function () {
   var DB_NAME = "jobAutofillArchive";
-  var DB_VERSION = 1;
+  var DB_VERSION = 2;
   var SUMMARY_KEY = "dashboard";
 
   var dbPromise = null;
@@ -44,6 +44,12 @@ self.ArchiveDB = (function () {
 
         if (!db.objectStoreNames.contains("meta")) {
           db.createObjectStore("meta", { keyPath: "key" });
+        }
+
+        if (!db.objectStoreNames.contains("resumeParseCache")) {
+          var cache = db.createObjectStore("resumeParseCache", { keyPath: "fingerprint" });
+          cache.createIndex("updatedAt", "updatedAt", { unique: false });
+          cache.createIndex("sourceType", "sourceType", { unique: false });
         }
       };
 
@@ -213,6 +219,18 @@ self.ArchiveDB = (function () {
     });
   }
 
+  async function getResumeParseCache(fingerprint) {
+    return await withStores(["resumeParseCache"], "readonly", function (stores) {
+      return waitRequest(stores.resumeParseCache.get(fingerprint));
+    });
+  }
+
+  async function setResumeParseCache(entry) {
+    return await withStores(["resumeParseCache"], "readwrite", function (stores) {
+      stores.resumeParseCache.put(clone(entry));
+    });
+  }
+
   return {
     SUMMARY_KEY: SUMMARY_KEY,
     openDb: openDb,
@@ -231,5 +249,7 @@ self.ArchiveDB = (function () {
     deleteDocument: deleteDocument,
     listAllDocuments: listAllDocuments,
     clearStore: clearStore,
+    getResumeParseCache: getResumeParseCache,
+    setResumeParseCache: setResumeParseCache,
   };
 })();
